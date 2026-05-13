@@ -1,0 +1,62 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderQuotaMeter > renders a 5h meter at known utilization 1`] = `
+"<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">
+  <rect width="144" height="144" fill="#1A100E" rx="16"/>
+  
+    <circle cx="72" cy="72" r="58" fill="none" stroke="#5C2F2A" stroke-width="12"/>
+    <circle cx="72" cy="72" r="58" fill="none" stroke="#3FB950" stroke-width="12"
+            stroke-linecap="round" stroke-dasharray="153.05839408289472 211.3663537335213"
+            transform="rotate(-90 72 72)"/>
+    <text x="72" y="84" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="44" font-weight="700" fill="#3FB950">42<tspan font-size="18" dy="-18" fill="#3FB950">%</tspan></text>
+    <rect x="48" y="116" width="48" height="22" rx="11" fill="#D0776C"/>
+    <text x="72" y="132" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#0F1115" letter-spacing="1.5">5H</text>
+    
+    
+  
+</svg>"
+`;
+
+exports[`renderQuotaMeter > renders a 7d meter at high utilization (red band) 1`] = `
+"<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">
+  <rect width="144" height="144" fill="#1A100E" rx="16"/>
+  
+    <circle cx="72" cy="72" r="58" fill="none" stroke="#5C2F2A" stroke-width="12"/>
+    <circle cx="72" cy="72" r="58" fill="none" stroke="#E5534B" stroke-width="12"
+            stroke-linecap="round" stroke-dasharray="327.98227303477444 36.44247478164158"
+            transform="rotate(-90 72 72)"/>
+    <text x="72" y="84" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="44" font-weight="700" fill="#E5534B">90<tspan font-size="18" dy="-18" fill="#E5534B">%</tspan></text>
+    <rect x="48" y="116" width="48" height="22" rx="11" fill="#D0776C"/>
+    <text x="72" y="132" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#0F1115" letter-spacing="1.5">7D</text>
+    
+    
+  
+</svg>"
+`;
+
+exports[`renderQuotaMeter > renders the unknown state (null utilization) 1`] = `
+"<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">
+  <rect width="144" height="144" fill="#1A100E" rx="16"/>
+  
+    <circle cx="72" cy="72" r="58" fill="none" stroke="#5C2F2A" stroke-width="12"/>
+    <circle cx="72" cy="72" r="58" fill="none" stroke="#8A93A1" stroke-width="12"
+            stroke-linecap="round" stroke-dasharray="0 364.424747816416"
+            transform="rotate(-90 72 72)"/>
+    <text x="72" y="84" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="44" font-weight="700" fill="#8A93A1">--</text>
+    <rect x="48" y="116" width="48" height="22" rx="11" fill="#D0776C"/>
+    <text x="72" y="132" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#0F1115" letter-spacing="1.5">5H</text>
+    
+    
+  
+</svg>"
+`;
+
+exports[`renderValueKey > renders a basic value + label 1`] = `
+"<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">
+  <rect width="144" height="144" fill="#0F1115" rx="16"/>
+  
+    <text x="72" y="78" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="38" font-weight="700" fill="#F4F6FA">$1.23</text>
+    <text x="72" y="130" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#8A93A1" letter-spacing="1.5">TODAY</text>
+  
+</svg>"
+`;

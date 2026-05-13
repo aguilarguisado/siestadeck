@@ -1,0 +1,67 @@
+{
+  "name": "siestadeck",
+  "version": "0.0.1",
+  "description": "Time to siesta. Live Claude Code quota, spend, and multi-account control on your Elgato Stream Deck.",
+  "type": "module",
+  "scripts": {
+    "icons": "node scripts/build-icons.mjs",
+    "prebuild": "npm run icons",
+    "build": "rollup -c",
+    "watch": "rollup -c -w --watch.onEnd=\"streamdeck restart io.github.aguilarguisado.siestadeck\"",
+    "validate": "streamdeck validate io.github.aguilarguisado.siestadeck.sdPlugin",
+    "link": "streamdeck link io.github.aguilarguisado.siestadeck.sdPlugin",
+    "restart": "streamdeck restart io.github.aguilarguisado.siestadeck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
+    "check:release": "node scripts/check-release-readiness.mjs",
+    "prepack": "npm run check:release",
+    "pack": "streamdeck pack io.github.aguilarguisado.siestadeck.sdPlugin"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Juan",
+    "email": "4genticdev@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aguilarguisado/siestadeck.git"
+  },
+  "homepage": "https://github.com/aguilarguisado/siestadeck#readme",
+  "bugs": {
+    "url": "https://github.com/aguilarguisado/siestadeck/issues"
+  },
+  "keywords": [
+    "stream-deck",
+    "streamdeck",
+    "streamdeck-plugin",
+    "elgato",
+    "claude",
+    "claude-code",
+    "anthropic",
+    "developer-tools",
+    "telemetry"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@elgato/streamdeck": "^2.1.0",
+    "@resvg/resvg-wasm": "^2.6.2"
+  },
+  "devDependencies": {
+    "@elgato/cli": "^1.7.4",
+    "@resvg/resvg-js": "^2.6.2",
+    "@rollup/plugin-commonjs": "^29.0.2",
+    "@rollup/plugin-node-resolve": "^16.0.3",
+    "@rollup/plugin-terser": "^1.0.0",
+    "@rollup/plugin-typescript": "^12.3.0",
+    "@tsconfig/node20": "^20.1.9",
+    "@types/node": "^25.6.2",
+    "@vitest/coverage-v8": "^4.1.5",
+    "rollup": "^4.60.3",
+    "tslib": "^2.8.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  }
+}

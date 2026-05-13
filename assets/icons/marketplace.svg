@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <!-- Marketplace tile: dark plugin bg with the brand snooze-gauge centered
+       and the "siestadeck" wordmark below. Rasterized 1× and 2× by
+       scripts/build-icons.mjs. -->
+  <rect width="256" height="256" rx="48" fill="#0F1115"/>
+
+  <svg x="48" y="40" width="160" height="160" viewBox="0 0 64 64">
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M 10 44 A 22 22 0 0 1 54 44" stroke="#F0F0EE" stroke-width="2.5"/>
+      <line x1="10" y1="44" x2="13" y2="42" stroke="#F0F0EE" stroke-width="2"/>
+      <line x1="20" y1="28" x2="22" y2="30" stroke="#F0F0EE" stroke-width="2"/>
+      <line x1="32" y1="22" x2="32" y2="25" stroke="#F0F0EE" stroke-width="2"/>
+      <line x1="44" y1="28" x2="42" y2="30" stroke="#F0F0EE" stroke-width="2"/>
+      <line x1="54" y1="44" x2="51" y2="42" stroke="#F0F0EE" stroke-width="2"/>
+      <line x1="32" y1="44" x2="48" y2="32" stroke="#D0776C" stroke-width="3.5"/>
+      <circle cx="32" cy="44" r="3" fill="#F0F0EE"/>
+      <path d="M 44 8 L 56 8 L 44 22 L 56 22" stroke="#D0776C" stroke-width="3"/>
+    </g>
+  </svg>
+
+  <text x="128" y="222" text-anchor="middle" font-family="'Bricolage Grotesque', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#F0F0EE" letter-spacing="3">SIESTADECK</text>
+</svg>

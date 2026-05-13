@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Category icon: monochrome snooze-gauge. Uses currentColor so the
+       icon-build script can tint it (white for the manifest CategoryIcon). -->
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 10 44 A 22 22 0 0 1 54 44" stroke-width="2.5"/>
+    <line x1="10" y1="44" x2="13" y2="42" stroke-width="2"/>
+    <line x1="20" y1="28" x2="22" y2="30" stroke-width="2"/>
+    <line x1="32" y1="22" x2="32" y2="25" stroke-width="2"/>
+    <line x1="44" y1="28" x2="42" y2="30" stroke-width="2"/>
+    <line x1="54" y1="44" x2="51" y2="42" stroke-width="2"/>
+    <line x1="32" y1="44" x2="48" y2="32" stroke-width="3.5"/>
+    <path d="M 44 8 L 56 8 L 44 22 L 56 22" stroke-width="3"/>
+  </g>
+  <circle cx="32" cy="44" r="3" fill="currentColor"/>
+</svg>

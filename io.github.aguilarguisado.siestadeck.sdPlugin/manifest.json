@@ -1,0 +1,108 @@
+{
+  "Name": "siestadeck",
+  "Version": "0.0.1.0",
+  "Author": "Juan",
+  "Description": "Time to siesta. Live Claude Code quota, spend, and multi-account control on your Stream Deck. See your 5h/7d Max limits at a glance and swap accounts in one press.",
+  "Category": "siestadeck",
+  "CategoryIcon": "imgs/plugin/category-icon",
+  "Icon": "imgs/plugin/marketplace",
+  "URL": "https://github.com/aguilarguisado/siestadeck",
+  "CodePath": "bin/plugin.js",
+  "Nodejs": {
+    "Version": "20",
+    "Debug": "enabled"
+  },
+  "OS": [
+    {
+      "Platform": "mac",
+      "MinimumVersion": "12"
+    },
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "SDKVersion": 2,
+  "Software": {
+    "MinimumVersion": "6.5"
+  },
+  "UUID": "io.github.aguilarguisado.siestadeck",
+  "Actions": [
+    {
+      "Name": "Quota Meter",
+      "UUID": "io.github.aguilarguisado.siestadeck.quota-meter",
+      "Icon": "imgs/actions/quota-meter/icon",
+      "Tooltip": "Live 5h or 7d Claude Max quota percentage.",
+      "PropertyInspectorPath": "pi/quotaMeter.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/quota-meter/key",
+          "TitleAlignment": "middle",
+          "FontSize": 10,
+          "FontStyle": "Bold"
+        }
+      ]
+    },
+    {
+      "Name": "Extra Usage",
+      "UUID": "io.github.aguilarguisado.siestadeck.extra-usage",
+      "Icon": "imgs/actions/extra-usage/icon",
+      "Tooltip": "Pay-as-you-go usage billed beyond your Claude Max plan this month.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/extra-usage/key"
+        }
+      ]
+    },
+    {
+      "Name": "Active Model",
+      "UUID": "io.github.aguilarguisado.siestadeck.active-model",
+      "Icon": "imgs/actions/active-model/icon",
+      "Tooltip": "The default Claude model currently in use.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/active-model/key"
+        }
+      ]
+    },
+    {
+      "Name": "Switch Account",
+      "UUID": "io.github.aguilarguisado.siestadeck.switch-account",
+      "Icon": "imgs/actions/switch-account/icon",
+      "Tooltip": "Swap the active Claude Code account.",
+      "PropertyInspectorPath": "pi/switchAccount.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/switch-account/key"
+        }
+      ]
+    },
+    {
+      "Name": "Login / Logout",
+      "UUID": "io.github.aguilarguisado.siestadeck.login-logout",
+      "Icon": "imgs/actions/login-logout/icon",
+      "Tooltip": "Log in or out of Claude Code, or capture a new account into siestadeck.",
+      "PropertyInspectorPath": "pi/loginLogout.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/login-logout/key"
+        }
+      ]
+    }
+  ]
+}

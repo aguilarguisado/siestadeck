@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Switch Account</title>
+  <script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+</head>
+<body>
+  <sdpi-item label="Mode">
+    <sdpi-select setting="mode" default="next">
+      <option value="next">Cycle to next saved account</option>
+      <option value="specific">Switch to specific account</option>
+    </sdpi-select>
+  </sdpi-item>
+  <sdpi-item label="Target">
+    <sdpi-select setting="targetSlug" datasource="getAccounts"></sdpi-select>
+  </sdpi-item>
+  <sdpi-item label="">
+    <sdpi-textfield-typography>
+      Target is only used in "specific" mode. Cycle mode rotates through saved accounts.
+    </sdpi-textfield-typography>
+  </sdpi-item>
+</body>
+</html>

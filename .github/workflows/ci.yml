@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Tests + coverage
+        run: npm run coverage
+
+      - name: Build icons + bundle
+        run: npm run build
+
+      - name: Validate manifest
+        run: npx streamdeck validate io.github.aguilarguisado.siestadeck.sdPlugin
+
+      - name: Pack plugin
+        if: matrix.os == 'macos-latest'
+        run: npx streamdeck pack io.github.aguilarguisado.siestadeck.sdPlugin --force
+
+      - name: Upload artifact
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: siestadeck-plugin
+          path: io.github.aguilarguisado.siestadeck.streamDeckPlugin
+          retention-days: 14

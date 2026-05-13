@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Login / Logout</title>
+  <script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+</head>
+<body>
+  <sdpi-item label="Mode">
+    <sdpi-select setting="mode" default="login">
+      <option value="login">Log in / add account</option>
+      <option value="logout">Log out</option>
+    </sdpi-select>
+  </sdpi-item>
+  <sdpi-item label="Display name">
+    <sdpi-textfield setting="displayName" placeholder="Label for new accounts (optional)"></sdpi-textfield>
+  </sdpi-item>
+  <sdpi-item label="">
+    <sdpi-textfield-typography>
+      Opens a Terminal running `claude auth login` / `claude auth logout`. On login, siestadeck polls the keychain for ~3 minutes and adopts the resulting account — adding it as a new profile if the email is new, or refreshing the existing entry. Display name is only used for new profiles.
+    </sdpi-textfield-typography>
+  </sdpi-item>
+</body>
+</html>

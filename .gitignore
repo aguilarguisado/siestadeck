@@ -1,0 +1,16 @@
+node_modules/
+io.github.aguilarguisado.siestadeck.sdPlugin/bin/
+io.github.aguilarguisado.siestadeck.sdPlugin/logs/
+*.streamDeckPlugin
+.DS_Store
+.vscode/
+*.log
+
+# Built PNGs are regenerated from assets/icons/*.svg via `npm run icons`.
+io.github.aguilarguisado.siestadeck.sdPlugin/imgs/
+
+# Test coverage output
+coverage/
+
+# Local Claude Code state (skill output, brand-kit metadata, etc.)
+.claude/

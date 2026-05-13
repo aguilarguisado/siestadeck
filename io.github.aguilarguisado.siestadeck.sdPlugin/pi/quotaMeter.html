@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Quota Meter</title>
+  <script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+</head>
+<body>
+  <sdpi-item label="Window">
+    <sdpi-select setting="window" default="5h">
+      <option value="5h">5-hour rolling</option>
+      <option value="7d">7-day rolling</option>
+    </sdpi-select>
+  </sdpi-item>
+  <sdpi-item label="Auto-refresh">
+    <sdpi-checkbox setting="autoRefresh" label="Poll the quota endpoint in the background"></sdpi-checkbox>
+  </sdpi-item>
+  <sdpi-item label="Interval (min)">
+    <sdpi-textfield setting="autoRefreshMinutes" placeholder="15" type="number" min="5"></sdpi-textfield>
+  </sdpi-item>
+  <sdpi-item label="">
+    <sdpi-textfield-typography>
+      Always reports the active logged-in account. Default is manual-only: pressing the key refreshes the quota. Turn on auto-refresh to poll in the background (default 15 minutes, 5-minute hard floor). Auto-refresh ticks are skipped automatically when Claude Code has been idle for 20+ minutes.
+    </sdpi-textfield-typography>
+  </sdpi-item>
+</body>
+</html>
