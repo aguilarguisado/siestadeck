@@ -12,6 +12,13 @@ import {
   writeGenericPassword,
   type ClaudeCredentials,
 } from "./keychain.js";
+import {
+  decideCredsSource,
+  detectCorruptedStashes,
+  sameEmail,
+  type CredsSource,
+  type StashEntry,
+} from "./accountsPolicy.js";
 import { refreshOAuthToken } from "./oauthRefresh.js";
 import {
   accountsRegistryDir as REGISTRY_DIR,
@@ -69,11 +76,18 @@ function describeError(err: unknown): string {
 export class AccountsService extends EventEmitter {
   private registry: Registry = { accounts: [], activeSlug: null };
   private pollTimer?: NodeJS.Timeout;
+  /**
+   * Memoizes `email` resolved from an access token via `/profile`, so identity
+   * confirmation costs at most one network call per distinct token. Cleared
+   * whenever credentials change under us (swap / adopt / capture).
+   */
+  private emailMemo = new Map<string, string | null>();
 
   async start(): Promise<void> {
     this.registry = await readRegistry();
     await this.reconcilePaletteColors();
-    await this.adoptCurrentLoginIfNew();
+    await this.removeCrossWiredStashes();
+    await this.adoptCurrentLogin({ intent: "passive" });
     this.emit("changed");
   }
 
@@ -104,35 +118,11 @@ export class AccountsService extends EventEmitter {
   }
 
   async getAccessToken(slug: string): Promise<string | null> {
-    const creds = await this.loadCreds(slug);
+    const { creds } = await this.resolveCreds(slug);
     return creds?.claudeAiOauth?.accessToken ?? null;
   }
 
-  /**
-   * Read credentials for `slug` from the freshest available source.
-   *
-   * Claude Code rotates its OAuth tokens silently (refresh-token rotation is
-   * enforced by Anthropic — a successful refresh invalidates the old refresh
-   * token). Our per-account stash is only a point-in-time snapshot, so for
-   * the **active** slug the live `Claude Code-credentials` entry is the
-   * source of truth. For inactive slugs the stash is all we have.
-   *
-   * As a side effect, when we read fresher tokens out of the live entry
-   * than the stash holds, we mirror them back into the stash so a future
-   * swap doesn't restore stale credentials.
-   */
-  private async loadCreds(slug: string): Promise<ClaudeCredentials | null> {
-    const isActive = slug === this.registry.activeSlug;
-    if (isActive) {
-      try {
-        const live = await readClaudeCredentials();
-        await this.mirrorIntoStashIfNewer(slug, live);
-        return live;
-      } catch {
-        // Fall through to the stash so a transient live-read failure
-        // doesn't lock us out of an account we have stashed creds for.
-      }
-    }
+  private async readStash(slug: string): Promise<ClaudeCredentials | null> {
     try {
       const raw = await readGenericPassword(keychainServiceFor(slug));
       return JSON.parse(raw) as ClaudeCredentials;
@@ -141,14 +131,70 @@ export class AccountsService extends EventEmitter {
     }
   }
 
-  private async mirrorIntoStashIfNewer(slug: string, live: ClaudeCredentials): Promise<void> {
-    try {
-      const raw = await readGenericPassword(keychainServiceFor(slug));
-      const stashed = JSON.parse(raw) as ClaudeCredentials;
-      if (stashed?.claudeAiOauth?.accessToken === live.claudeAiOauth.accessToken) return;
-    } catch {
-      // No stash yet (or unreadable) — write below.
+  /** Memoized `/profile` email lookup — at most one network call per token. */
+  private async resolveEmail(token: string): Promise<string | null> {
+    if (this.emailMemo.has(token)) return this.emailMemo.get(token) ?? null;
+    const email = await this.fetchEmail(token);
+    this.emailMemo.set(token, email);
+    return email;
+  }
+
+  /**
+   * Resolve the credentials to use for `slug`, and report where they came from.
+   *
+   * The live `Claude Code-credentials` entry is shared with the running Claude
+   * Code process, which can rotate a DIFFERENT account's token into it (e.g.
+   * you swapped in Siesta but didn't restart Claude Code). So for the active
+   * (Siesta-selected) account we use the live entry only when it's provably
+   * ours: identical access token, or a memoized `/profile` lookup confirming
+   * its email. Otherwise — and for every inactive slug — we use the account's
+   * own stash.
+   *
+   * Side effect: when the live entry is confirmed ours and fresher than the
+   * stash, we mirror it back so a later swap restores current credentials.
+   */
+  private async resolveCreds(
+    slug: string,
+  ): Promise<{ creds: ClaudeCredentials | null; source: CredsSource | "none" }> {
+    const acct = this.get(slug);
+    const stash = await this.readStash(slug);
+    const stashToken = stash?.claudeAiOauth.accessToken ?? null;
+
+    if (slug === this.registry.activeSlug) {
+      let live: ClaudeCredentials | null = null;
+      try {
+        live = await readClaudeCredentials();
+      } catch {
+        live = null;
+      }
+      if (live) {
+        const liveToken = live.claudeAiOauth.accessToken;
+        let confirmedLiveEmail: string | null | undefined;
+        if (stashToken == null || liveToken !== stashToken) {
+          confirmedLiveEmail = await this.resolveEmail(liveToken);
+        }
+        const source = decideCredsSource({
+          liveToken,
+          stashToken,
+          confirmedLiveEmail,
+          accountEmail: acct?.email ?? null,
+        });
+        if (source === "live") {
+          await this.mirrorIntoStash(slug, live, stashToken);
+          return { creds: live, source: "live" };
+        }
+      }
     }
+
+    return { creds: stash, source: stash ? "stash" : "none" };
+  }
+
+  private async mirrorIntoStash(
+    slug: string,
+    live: ClaudeCredentials,
+    stashToken: string | null,
+  ): Promise<void> {
+    if (stashToken === live.claudeAiOauth.accessToken) return;
     try {
       await this.stashCreds(slug, live);
     } catch (err) {
@@ -157,25 +203,24 @@ export class AccountsService extends EventEmitter {
   }
 
   /**
-   * Mint a fresh access_token for `slug` by redeeming the freshest available
+   * Mint a fresh access_token for `slug` by redeeming its freshest available
    * refresh_token against Anthropic's OAuth endpoint, then write the result
-   * back to both the per-account stash and (for the active slug) the live
-   * `Claude Code-credentials` entry that Claude Code itself reads.
+   * back to the per-account stash — and to the live `Claude Code-credentials`
+   * entry only when that entry is confirmed to belong to this account
+   * (`source === "live"`). Refreshing an account whose live entry belongs to a
+   * different account updates the stash alone, so we never clobber the token a
+   * running Claude Code is using.
    *
    * Returns true on success, false otherwise. Failure reasons are logged so
    * the 30-minute auth-expired backoff (`UNAUTHORIZED_BACKOFF_MS`) is never
    * a black box.
-   *
-   * The `__bootstrap__` synthetic slug used by QuotaRegistry has no stash
-   * and is short-circuited by the caller.
    */
   async refreshTokenFor(slug: string): Promise<boolean> {
-    const isActive = slug === this.registry.activeSlug;
-    const source = isActive ? "live keychain" : "stash";
-    const creds = await this.loadCreds(slug);
+    if (slug === "__bootstrap__") return false;
+    const { creds, source } = await this.resolveCreds(slug);
     const oauth = creds?.claudeAiOauth;
     if (!oauth?.refreshToken) {
-      streamDeck.logger.warn(`accounts[${slug}]: refresh skipped — no refresh_token in ${source}`);
+      streamDeck.logger.warn(`accounts[${slug}]: refresh skipped — no usable refresh_token`);
       return false;
     }
     let refreshed;
@@ -195,7 +240,11 @@ export class AccountsService extends EventEmitter {
     };
     try {
       await this.stashCreds(slug, next);
-      if (isActive) {
+      // Only write back to the live entry when it currently belongs to this
+      // account (source === "live"). Otherwise we'd clobber a different
+      // account's live credentials that Claude Code is actively using.
+      if (source === "live") {
+        this.emailMemo.delete(oauth.accessToken);
         await writeClaudeCredentials(os.userInfo().username, JSON.stringify(next));
       }
     } catch (err) {
@@ -205,23 +254,30 @@ export class AccountsService extends EventEmitter {
     return true;
   }
 
-  /**
-   * If Claude Code is already logged in to an account the plugin hasn't seen,
-   * adopt it as a saved account on first run so the user doesn't have to
-   * re-authenticate just to start using the plugin.
-   */
-  private async adoptCurrentLoginIfNew(): Promise<void> {
-    await this.adoptCurrentLogin();
+  /** True when `activeSlug` points at an account that still exists. */
+  private hasValidSelection(): boolean {
+    return this.registry.activeSlug != null && this.get(this.registry.activeSlug) != null;
   }
 
   /**
-   * Read whatever credentials Claude Code currently has stashed and merge
-   * them into our registry. If the email matches an existing account we
-   * just refresh `lastUsedAt` + re-stash. Otherwise mint a new account
-   * (using `displayName` if provided, else the email prefix).
-   * Returns the slug that ended up active, or null if no live credentials.
+   * Read whatever credentials Claude Code currently has and merge them into our
+   * registry. The credentials always belong to the matched email, so re-stashing
+   * onto that account is safe and keeps it current.
+   *
+   * Whether this *changes the selection* depends on `intent`:
+   *  - `"explicit"` — a deliberate Siesta login/add-account → always make the
+   *    adopted account active.
+   *  - `"passive"` — startup reconcile → only set the active account when there
+   *    is no valid selection yet (genuine first run). An existing selection is
+   *    sticky: Siesta keeps showing the account *you* picked even if Claude Code
+   *    is currently logged in to a different one.
+   *
+   * Returns the resulting active slug, or null if there were no live credentials.
    */
-  private async adoptCurrentLogin(displayName?: string): Promise<string | null> {
+  private async adoptCurrentLogin(opts: {
+    displayName?: string;
+    intent: "passive" | "explicit";
+  }): Promise<string | null> {
     let creds;
     try {
       creds = await readClaudeCredentials();
@@ -230,15 +286,19 @@ export class AccountsService extends EventEmitter {
     }
     const email = await this.fetchEmail(creds.claudeAiOauth.accessToken);
     if (!email) return null;
-    const existing = this.registry.accounts.find((a) => a.email === email);
+    this.emailMemo.clear();
+    const setActive = opts.intent === "explicit" || !this.hasValidSelection();
+    const existing = this.registry.accounts.find((a) => sameEmail(a.email, email));
     if (existing) {
-      this.registry.activeSlug = existing.slug;
-      existing.lastUsedAt = new Date().toISOString();
       await this.stashCreds(existing.slug, creds);
+      if (setActive) {
+        this.registry.activeSlug = existing.slug;
+        existing.lastUsedAt = new Date().toISOString();
+      }
       await writeRegistry(this.registry);
-      return existing.slug;
+      return this.registry.activeSlug;
     }
-    const baseName = displayName?.trim() || email.split("@")[0] || "account";
+    const baseName = opts.displayName?.trim() || email.split("@")[0] || "account";
     const slug = this.uniqueSlug(slugify(baseName));
     const acct: Account = {
       slug,
@@ -251,10 +311,49 @@ export class AccountsService extends EventEmitter {
       lastUsedAt: new Date().toISOString(),
     };
     this.registry.accounts.push(acct);
-    this.registry.activeSlug = slug;
+    if (setActive) this.registry.activeSlug = slug;
     await this.stashCreds(slug, creds);
     await writeRegistry(this.registry);
-    return slug;
+    return this.registry.activeSlug;
+  }
+
+  /**
+   * Remove cross-wired accounts left by the old desync bug, where one account's
+   * per-account stash was overwritten with another account's credentials. Two
+   * accounts sharing an access token is unambiguous corruption. We keep the
+   * true owner (resolved via `/profile`) and drop the rest from the registry —
+   * a corrupt stash can never be made correct in place, so the cleanest remedy
+   * is to log the account out of Siesta and let the user re-add it via Login,
+   * which captures fresh, correct credentials.
+   *
+   * Clears `activeSlug` if it pointed at a removed account; the subsequent
+   * passive adopt then re-selects whatever Claude Code is actually logged in to.
+   */
+  private async removeCrossWiredStashes(): Promise<void> {
+    const entries: StashEntry[] = [];
+    for (const acct of this.registry.accounts) {
+      const stash = await this.readStash(acct.slug);
+      entries.push({
+        slug: acct.slug,
+        token: stash?.claudeAiOauth.accessToken ?? null,
+        email: acct.email,
+      });
+    }
+    const counts = new Map<string, number>();
+    for (const e of entries) if (e.token) counts.set(e.token, (counts.get(e.token) ?? 0) + 1);
+    const resolved: Record<string, string | null> = {};
+    for (const [token, n] of counts) {
+      if (n >= 2) resolved[token] = await this.resolveEmail(token);
+    }
+    const { flag } = detectCorruptedStashes(entries, resolved);
+    if (flag.length === 0) return;
+    const drop = new Set(flag);
+    this.registry.accounts = this.registry.accounts.filter((a) => !drop.has(a.slug));
+    if (this.registry.activeSlug && drop.has(this.registry.activeSlug)) {
+      this.registry.activeSlug = null;
+    }
+    await writeRegistry(this.registry);
+    streamDeck.logger.warn(`accounts: removed cross-wired accounts (re-add via Login): ${flag.join(", ")}`);
   }
 
   /**
@@ -291,7 +390,7 @@ export class AccountsService extends EventEmitter {
       if (changed) {
         if (this.pollTimer) clearInterval(this.pollTimer);
         this.pollTimer = undefined;
-        const slug = await this.adoptCurrentLogin(displayName);
+        const slug = await this.adoptCurrentLogin({ displayName, intent: "explicit" });
         if (slug) this.emit("changed");
         return;
       }
@@ -347,6 +446,7 @@ export class AccountsService extends EventEmitter {
     if (!acct) throw new Error(`Unknown account: ${slug}`);
     const raw = await readGenericPassword(keychainServiceFor(slug));
     await writeClaudeCredentials(os.userInfo().username, raw);
+    this.emailMemo.clear();
     this.registry.activeSlug = slug;
     acct.lastUsedAt = new Date().toISOString();
     await writeRegistry(this.registry);
@@ -375,6 +475,7 @@ export class AccountsService extends EventEmitter {
       lastUsedAt: new Date().toISOString(),
     };
     await this.stashCreds(slug, creds);
+    this.emailMemo.clear();
     this.registry.accounts.push(acct);
     this.registry.activeSlug = slug;
     await writeRegistry(this.registry);
