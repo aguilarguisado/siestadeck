@@ -1,4 +1,4 @@
-import { renderQuotaMeter, renderSiestaTile } from "../../render/svg.js";
+import { renderLoginRequired, renderQuotaMeter, renderSiestaTile } from "../../render/svg.js";
 import type { QuotaSnapshot } from "../../services/quota.js";
 
 export const SIESTA_PHRASES = ["siesta", "descansa", "suficiente", "disfruta"] as const;
@@ -37,6 +37,14 @@ export function drawQuotaMeter({ snap, window, now, phraseIndex, descentProgress
     : 0;
   const utilization = data?.utilization ?? null;
   const isSiesta = utilization != null && utilization >= 1;
+
+  // Login lost (401/403 → failed refresh → 30-min auth backoff): show a distinct
+  // "sign in" tile instead of the WAIT badge, and return cooldownSeconds 0 so the
+  // action skips the 1s countdown tick — there's nothing to count down.
+  if (snap?.cooldownReason === "auth" && cooldownSeconds > 0) {
+    const svg = renderLoginRequired({ window: win, label: win.toUpperCase() });
+    return { svg, cooldownSeconds: 0, resetsInSeconds, isSiesta: false };
+  }
 
   const svg = isSiesta
     ? renderSiestaTile({

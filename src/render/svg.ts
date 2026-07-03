@@ -186,6 +186,40 @@ export function renderQuotaMeter({ utilization, window, label, cooldownSeconds, 
   `, bgColor);
 }
 
+export type LoginRequiredProps = {
+  window: "5h" | "7d";
+  /** Bottom pill label, e.g. "5H" / "7D" — mirrors the gauge for family consistency. */
+  label: string;
+};
+
+/**
+ * "Login lost" tile. Shown when the quota fetch got a 401/403 and the token
+ * refresh failed (auth backoff), instead of the misleading WAIT badge a rate
+ * limit would show. A red frame + key glyph + "LOG IN" makes it unmistakable
+ * that this is an auth problem the user fixes by re-authenticating. The tile is
+ * static (no countdown), so the exact-string rasterize cache stays warm.
+ */
+export function renderLoginRequired({ window, label }: LoginRequiredProps): string {
+  const pillColor = window === "5h" ? colors.accent : colors.accent7d;
+  const bgColor = window === "5h" ? colors.bg5h : colors.bg7d;
+  const pillH = 22;
+  const pillW = 48;
+  const pillX = (SIZE - pillW) / 2;
+  const bottomPillY = SIZE - pillH - 6;
+
+  return svgFrame(`
+    <rect x="4" y="4" width="${SIZE - 8}" height="${SIZE - 8}" rx="14" fill="none" stroke="${colors.danger}" stroke-width="3"/>
+    <circle cx="72" cy="36" r="13" fill="none" stroke="${colors.danger}" stroke-width="6"/>
+    <rect x="69" y="47" width="6" height="26" rx="1" fill="${colors.danger}"/>
+    <rect x="75" y="60" width="9" height="5" rx="1" fill="${colors.danger}"/>
+    <rect x="75" y="68" width="7" height="5" rx="1" fill="${colors.danger}"/>
+    <text x="${SIZE / 2}" y="98" text-anchor="middle" font-family="${FONT}" font-size="23" font-weight="800" fill="${colors.danger}" letter-spacing="2">LOG IN</text>
+    <text x="${SIZE / 2}" y="112" text-anchor="middle" font-family="${FONT}" font-size="11" font-weight="600" fill="${colors.textDim}" letter-spacing="1">tap to sign in</text>
+    <rect x="${pillX}" y="${bottomPillY}" width="${pillW}" height="${pillH}" rx="${pillH / 2}" fill="${pillColor}"/>
+    <text x="${pillX + pillW / 2}" y="${bottomPillY + pillH / 2 + 5}" text-anchor="middle" font-family="${FONT}" font-size="13" font-weight="800" fill="${colors.bg}" letter-spacing="1.5">${label}</text>
+  `, bgColor);
+}
+
 export type ValueKeyProps = {
   value: string;
   unit?: string;

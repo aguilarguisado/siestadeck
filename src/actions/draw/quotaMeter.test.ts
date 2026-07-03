@@ -53,6 +53,27 @@ describe("drawQuotaMeter", () => {
     expect(cooldownSeconds).toBe(0);
   });
 
+  it("renders the LOG IN tile (not WAIT) when cooldownReason is auth", () => {
+    const now = 1_000_000_000_000;
+    const snap = snapshot({ cooldownUntil: new Date(now + 30 * 60_000), cooldownReason: "auth" });
+    const { svg, cooldownSeconds, isSiesta } = drawQuotaMeter({ snap, now });
+    expect(svg).toContain("LOG IN");
+    expect(svg).not.toContain("WAIT");
+    // Static tile: the countdown tick is suppressed so the action doesn't
+    // needlessly re-render every second for the 30-min auth backoff.
+    expect(cooldownSeconds).toBe(0);
+    expect(isSiesta).toBe(false);
+  });
+
+  it("still renders the WAIT badge for a rate-limit cooldown (cooldownReason rate)", () => {
+    const now = 1_000_000_000_000;
+    const snap = snapshot({ cooldownUntil: new Date(now + 42_000), cooldownReason: "rate" });
+    const { svg, cooldownSeconds } = drawQuotaMeter({ snap, now });
+    expect(svg).toContain("WAIT 42s");
+    expect(svg).not.toContain("LOG IN");
+    expect(cooldownSeconds).toBe(42);
+  });
+
   it("computes resetsInSeconds from the active window's resetsAt", () => {
     const now = 1_000_000_000_000;
     const snap = snapshot({

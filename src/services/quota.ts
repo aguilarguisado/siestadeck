@@ -76,7 +76,24 @@ export class QuotaRegistry extends EventEmitter {
 
   start(): void {
     this.sync();
-    accountsService.on("changed", () => this.sync());
+    accountsService.on("changed", () => {
+      // A re-login (Login action, or a press on a logged-out quota tile) adopts
+      // fresh creds and emits "changed" without altering the slug set, so
+      // sync() alone would leave the stale 30-min auth backoff in place and the
+      // tile stuck on "LOG IN". Clear *auth* backoffs (never a real 429) and
+      // refresh so the gauge returns within a couple of seconds.
+      let recovered = false;
+      for (const s of this.accounts.values()) {
+        if (s.backoffReason === "auth") {
+          s.backoffUntil = 0;
+          s.backoffReason = undefined;
+          s.lastAttemptAt = 0;
+          recovered = true;
+        }
+      }
+      this.sync();
+      if (recovered) void this.refresh();
+    });
     accountsService.on("swapped", (slug: string) => {
       const state = this.accounts.get(slug);
       if (!state) return;
@@ -332,6 +349,7 @@ export class QuotaRegistry extends EventEmitter {
       fetchedAt: new Date(),
       error,
       cooldownUntil: cooldownUntilMs ? new Date(cooldownUntilMs) : null,
+      cooldownReason: cooldownUntilMs != null ? state.backoffReason : undefined,
     };
     state.latest = snap;
     this.publish(state, snap);
