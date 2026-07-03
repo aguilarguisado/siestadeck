@@ -15,10 +15,18 @@
   <sdpi-item label="">
     <sdpi-checkbox setting="alertIdle" default="true" label="Idle reminder (still waiting after ~1 minute)"></sdpi-checkbox>
   </sdpi-item>
+  <sdpi-item label="Hooks">
+    <button id="uninstall" type="button">Uninstall Claude Code hooks</button>
+  </sdpi-item>
   <sdpi-item label="">
     <sdpi-textfield-typography>
-      All alerts are enabled unless unchecked. The first key press installs the required Claude Code hooks into ~/.claude/settings.json (a .siestadeck.bak backup is written first). While something is alarming, press the key to acknowledge; new activity re-arms it automatically.
+      All alerts are enabled unless unchecked. The first key press installs the required Claude Code hooks into ~/.claude/settings.json (a .siestadeck.bak backup is written first). While something is alarming, press the key to acknowledge; new activity re-arms it automatically. Uninstalling removes only siestadeck's hooks and leaves the rest of settings.json untouched.
     </sdpi-textfield-typography>
   </sdpi-item>
+  <script>
+    document.getElementById("uninstall").addEventListener("click", () => {
+      SDPIComponents.streamDeckClient.send("sendToPlugin", { event: "uninstallHooks" });
+    });
+  </script>
 </body>
 </html>

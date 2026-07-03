@@ -3,6 +3,7 @@ import {
   type DidReceiveSettingsEvent,
   type KeyAction,
   type KeyDownEvent,
+  type SendToPluginEvent,
   SingletonAction,
   type WillAppearEvent,
   type WillDisappearEvent,
@@ -85,6 +86,24 @@ export class Attention extends SingletonAction<AttentionKeySettings> {
     );
     const states = (Object.keys(enabled) as AttentionState[]).filter((s) => enabled[s]);
     attentionService.acknowledge(states);
+  }
+
+  /**
+   * The Property Inspector's "Uninstall hooks" button sends
+   * `{ event: "uninstallHooks" }`; strip the hooks back out of
+   * ~/.claude/settings.json. The tile re-renders to SETUP via the service's
+   * snapshot, and we flash OK/alert for immediate feedback.
+   */
+  override async onSendToPlugin(
+    ev: SendToPluginEvent<{ event?: string }, AttentionKeySettings>,
+  ): Promise<void> {
+    if (ev.payload?.event !== "uninstallHooks") return;
+    try {
+      await attentionService.uninstallHooks();
+      if (ev.action.isKey()) await ev.action.showOk();
+    } catch {
+      if (ev.action.isKey()) await ev.action.showAlert();
+    }
   }
 
   private async draw(v: Visible, snap: AttentionSnapshot | null): Promise<void> {

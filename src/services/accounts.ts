@@ -78,10 +78,15 @@ export class AccountsService extends EventEmitter {
   private pollTimer?: NodeJS.Timeout;
   /**
    * Memoizes `email` resolved from an access token via `/profile`, so identity
-   * confirmation costs at most one network call per distinct token. Cleared
-   * whenever credentials change under us (swap / adopt / capture).
+   * confirmation costs at most one network call per distinct token. Only
+   * *definitive* results are cached (a confirmed email, or an authoritative
+   * "no email for this token"); transient failures are never cached so a later
+   * tick retries instead of pinning the token to "unconfirmable". Cleared
+   * whenever credentials change under us (swap / adopt / capture), and bounded
+   * to EMAIL_MEMO_CAP so a long-lived process can't accumulate stale tokens.
    */
   private emailMemo = new Map<string, string | null>();
+  private static readonly EMAIL_MEMO_CAP = 16;
 
   async start(): Promise<void> {
     this.registry = await readRegistry();
@@ -131,12 +136,31 @@ export class AccountsService extends EventEmitter {
     }
   }
 
-  /** Memoized `/profile` email lookup — at most one network call per token. */
+  /**
+   * Memoized `/profile` email lookup — at most one network call per token.
+   * A transient `/profile` failure (network error, 5xx, 429) surfaces as a
+   * throw from `fetchEmail` and is deliberately NOT cached: we return null for
+   * this call but leave the memo empty so the next tick can retry.
+   */
   private async resolveEmail(token: string): Promise<string | null> {
     if (this.emailMemo.has(token)) return this.emailMemo.get(token) ?? null;
-    const email = await this.fetchEmail(token);
-    this.emailMemo.set(token, email);
+    let email: string | null;
+    try {
+      email = await this.fetchEmail(token);
+    } catch {
+      return null; // transient — don't memoize, retry later
+    }
+    this.rememberEmail(token, email);
     return email;
+  }
+
+  /** Cache a definitive email result, evicting the oldest entry past the cap. */
+  private rememberEmail(token: string, email: string | null): void {
+    if (this.emailMemo.size >= AccountsService.EMAIL_MEMO_CAP && !this.emailMemo.has(token)) {
+      const oldest = this.emailMemo.keys().next().value;
+      if (oldest !== undefined) this.emailMemo.delete(oldest);
+    }
+    this.emailMemo.set(token, email);
   }
 
   /**
@@ -284,7 +308,12 @@ export class AccountsService extends EventEmitter {
     } catch {
       return null;
     }
-    const email = await this.fetchEmail(creds.claudeAiOauth.accessToken);
+    let email: string | null;
+    try {
+      email = await this.fetchEmail(creds.claudeAiOauth.accessToken);
+    } catch {
+      return null; // transient /profile failure — can't identify this login yet
+    }
     if (!email) return null;
     this.emailMemo.clear();
     const setActive = opts.intent === "explicit" || !this.hasValidSelection();
@@ -420,20 +449,32 @@ export class AccountsService extends EventEmitter {
     );
   }
 
+  /**
+   * Resolve the account email for an access token via `/profile`.
+   *
+   * Returns the email on success, or `null` when the endpoint *authoritatively*
+   * has no email for this token — a 2xx response without one, or a 401/403 that
+   * rejects the token outright (retrying changes neither, so both are safe to
+   * cache). THROWS on a *transient* failure (network error, 5xx, 429, malformed
+   * body) so callers can distinguish "confirmed: not this account" from
+   * "couldn't reach the server" and avoid caching the latter.
+   */
   private async fetchEmail(token: string): Promise<string | null> {
+    let res: Awaited<ReturnType<typeof fetch>>;
     try {
-      const res = await fetch("https://api.anthropic.com/api/oauth/profile", {
+      res = await fetch("https://api.anthropic.com/api/oauth/profile", {
         headers: {
           Authorization: `Bearer ${token}`,
           "anthropic-beta": "oauth-2025-04-20",
         },
       });
-      if (!res.ok) return null;
-      const data = (await res.json()) as { account?: { email?: string } };
-      return data.account?.email ?? null;
-    } catch {
-      return null;
+    } catch (err) {
+      throw new Error(`profile lookup failed: ${describeError(err)}`);
     }
+    if (res.status === 401 || res.status === 403) return null; // token authoritatively rejected
+    if (!res.ok) throw new Error(`profile lookup failed: HTTP ${res.status}`); // 5xx / 429 → transient
+    const data = (await res.json()) as { account?: { email?: string } };
+    return data.account?.email ?? null;
   }
 
   /**
@@ -462,7 +503,13 @@ export class AccountsService extends EventEmitter {
    */
   async captureCurrentAs(displayName: string): Promise<Account> {
     const creds = await readClaudeCredentials();
-    const email = (await this.fetchEmail(creds.claudeAiOauth.accessToken)) ?? `${displayName}@unknown`;
+    let resolved: string | null = null;
+    try {
+      resolved = await this.fetchEmail(creds.claudeAiOauth.accessToken);
+    } catch {
+      resolved = null; // transient /profile failure — fall back to a placeholder
+    }
+    const email = resolved ?? `${displayName}@unknown`;
     const slug = this.uniqueSlug(slugify(displayName || email.split("@")[0] || "account"));
     const acct: Account = {
       slug,

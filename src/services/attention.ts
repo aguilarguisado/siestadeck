@@ -14,6 +14,7 @@ import {
   hooksInstalled,
   mergeAttentionHooks,
   parseAttentionLine,
+  removeAttentionHooks,
   ROTATE_GRACE_MS,
   type SessionAttention,
   SETTINGS_CHECK_MS,
@@ -135,6 +136,35 @@ export class AttentionService extends EventEmitter {
     this.publish();
   }
 
+  /**
+   * Remove the attention hooks from ~/.claude/settings.json — the inverse of
+   * installHooks, so the user can fully back the feature out (the hooks fire
+   * for every Claude Code session machine-wide, so leaving no off-switch would
+   * be a permanent global side effect). A missing or already-clean file is a
+   * no-op. Throws when the existing file is unparseable (never clobber a file
+   * we can't read); the same pre-write backup is kept at settings.json.siestadeck.bak.
+   */
+  async uninstallHooks(): Promise<void> {
+    let raw: string;
+    try {
+      raw = await fs.readFile(SETTINGS_FILE, "utf8");
+    } catch {
+      this.hooksOk = false; // no settings file → nothing installed
+      this.publish();
+      return;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("settings.json is not a JSON object");
+    }
+    const stripped = removeAttentionHooks(parsed as Record<string, unknown>);
+    await fs.writeFile(SETTINGS_FILE + ".siestadeck.bak", raw, "utf8");
+    await fs.writeFile(SETTINGS_FILE, JSON.stringify(stripped, null, 2) + "\n", "utf8");
+    this.hooksOk = false;
+    this.settingsMtime = -1; // force a real re-check on the next settings tick
+    this.publish();
+  }
+
   private async tick(): Promise<void> {
     try {
       const now = Date.now();
@@ -180,10 +210,12 @@ export class AttentionService extends EventEmitter {
     try {
       stat = await fs.stat(EVENTS_FILE);
     } catch {
-      // no events yet (or freshly rotated with no straggler-free file yet)
+      // no events file yet (hooks installed but nothing has fired, or freshly
+      // rotated). Reset the cursor but KEEP firstRead: if a large file later
+      // appears we still want the bounded cold-start tail replay rather than
+      // ingesting its full history stamped at `now`.
       this.offset = 0;
       this.carry = "";
-      this.firstRead = false;
       return;
     }
     if (stat.size < this.offset) {

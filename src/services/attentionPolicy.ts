@@ -286,7 +286,12 @@ export function buildHookCommand(platform: "mac" | "windows"): string {
     );
   }
   // Single printf write keeps the O_APPEND append atomic even with several
-  // concurrent Claude Code sessions firing hooks at once.
+  // concurrent Claude Code sessions firing hooks at once. We rely on Claude
+  // Code emitting each hook payload as single-line JSON: `head -c` caps the
+  // byte count but does not strip interior newlines, so a multi-line payload
+  // would land as several lines. The parser tolerates that (each fragment is
+  // parsed independently and non-events are dropped), but the one-event-per-
+  // line invariant depends on the single-line assumption holding.
   return (
     `mkdir -p "$HOME/.claude/siestadeck" && ` +
     `printf '%s\\n' "$(head -c ${HOOK_STDIN_CAP})" >> "$HOME/.claude/siestadeck/attention.jsonl"`
@@ -339,4 +344,51 @@ export function mergeAttentionHooks(
     hooks[event] = entries;
   }
   return { ...settings, hooks };
+}
+
+/**
+ * Strip every attention hook handler (command contains HOOK_MARKER) from one
+ * event's entry, returning a NEW entry — or null when the entry held nothing
+ * but ours and should be dropped entirely. Foreign-shaped or marker-free
+ * entries are returned unchanged (same reference; never mutated).
+ */
+function stripMarkerHandlers(entry: unknown): unknown | null {
+  const obj = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
+  const list = obj?.hooks;
+  if (!Array.isArray(list)) return entry; // foreign shape — leave untouched
+  const kept = (list as HookHandler[]).filter(
+    (h) => !(h?.type === "command" && typeof h.command === "string" && h.command.includes(HOOK_MARKER)),
+  );
+  if (kept.length === list.length) return entry; // nothing of ours in here
+  if (kept.length === 0) return null; // was ours only — drop the whole entry
+  return { ...obj, hooks: kept };
+}
+
+/**
+ * Return a NEW settings object with the attention hooks removed — the inverse
+ * of mergeAttentionHooks. Strips only handlers whose command carries
+ * HOOK_MARKER, drops entries left empty, removes an event key once it has no
+ * entries, and deletes the top-level `hooks` key if it ends up empty. Foreign
+ * hooks and every other setting are preserved untouched. Idempotent, and never
+ * mutates its input.
+ */
+export function removeAttentionHooks(settings: Record<string, unknown>): Record<string, unknown> {
+  const hooks =
+    settings.hooks && typeof settings.hooks === "object" && !Array.isArray(settings.hooks)
+      ? (settings.hooks as Record<string, unknown>)
+      : null;
+  if (!hooks) return { ...settings };
+  const nextHooks: Record<string, unknown> = {};
+  for (const [event, entries] of Object.entries(hooks)) {
+    if (!Array.isArray(entries)) {
+      nextHooks[event] = entries; // non-array event value — leave as-is
+      continue;
+    }
+    const kept = entries.map(stripMarkerHandlers).filter((e) => e !== null);
+    if (kept.length > 0) nextHooks[event] = kept;
+  }
+  const next: Record<string, unknown> = { ...settings };
+  if (Object.keys(nextHooks).length > 0) next.hooks = nextHooks;
+  else delete next.hooks;
+  return next;
 }

@@ -22,7 +22,7 @@ npm run coverage   # vitest run --coverage (gated at 80% per vitest.config.ts)
 npm run pack       # create a .streamDeckPlugin distributable
 ```
 
-Correctness gates: type-checking via `rollup -c` (strict TS) and `npm run coverage` (Vitest). CI runs both on macOS and Windows. The coverage gate excludes Stream Deck SDK glue (action wrapper classes) and the heavy service classes (accounts/quota/activeSession) — their pure cores live in `*Policy.ts`/`draw/*.ts` siblings and are tested at near-100%. Don't lower the threshold without also widening the well-tested surface.
+Correctness gates: type-checking via `rollup -c` (strict TS) and `npm run coverage` (Vitest). CI runs both on macOS and Windows. The coverage gate excludes Stream Deck SDK glue (action wrapper classes) and the heavy service classes (accounts/quota/activeSession/attention) — their pure cores live in `*Policy.ts`/`draw/*.ts` siblings and are tested at near-100%. Don't lower the threshold without also widening the well-tested surface.
 
 `npm run watch` is the development happy-path: every save rebuilds and runs `streamdeck restart io.github.aguilarguisado.siestadeck`, so the plugin reloads in Stream Deck within ~1 second. No manual reload needed.
 

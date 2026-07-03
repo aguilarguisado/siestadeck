@@ -15,6 +15,7 @@ import {
   mergeAttentionHooks,
   parseAttentionLine,
   type RawHookEvent,
+  removeAttentionHooks,
   type SessionAttention,
   snapshotFingerprint,
   SOFT_TTL_MS,
@@ -365,6 +366,65 @@ describe("hook install", () => {
     delete partial.hooks.Stop;
     const completed = mergeAttentionHooks(partial as Record<string, unknown>, "mac");
     expect(hooksInstalled(completed)).toBe(true);
+  });
+
+  it("removeAttentionHooks fully reverses mergeAttentionHooks into empty settings", () => {
+    const merged = mergeAttentionHooks({}, "mac");
+    expect(hooksInstalled(merged)).toBe(true);
+    const removed = removeAttentionHooks(merged);
+    expect(removed).toEqual({}); // hooks key dropped entirely once empty
+    expect(hooksInstalled(removed)).toBe(false);
+  });
+
+  it("removeAttentionHooks is idempotent and a no-op on hook-free settings", () => {
+    expect(removeAttentionHooks({})).toEqual({});
+    expect(removeAttentionHooks({ model: "opus" })).toEqual({ model: "opus" });
+    expect(removeAttentionHooks({ hooks: "nope" })).toEqual({ hooks: "nope" }); // non-object hooks untouched
+    // a non-array event value is passed through untouched
+    expect(removeAttentionHooks({ hooks: { Notification: "weird" } })).toEqual({
+      hooks: { Notification: "weird" },
+    });
+    const once = removeAttentionHooks(mergeAttentionHooks({}, "mac"));
+    expect(removeAttentionHooks(once)).toEqual(once);
+  });
+
+  it("removeAttentionHooks strips only marker entries, keeping foreign ones and other keys, without mutating input", () => {
+    const foreign = { hooks: [{ type: "command", command: "afplay /System/Library/Sounds/Ping.aiff" }] };
+    const base: Record<string, unknown> = {
+      model: "opus",
+      env: { FOO: "bar" },
+      hooks: { Notification: [foreign], SubagentStop: [foreign] },
+    };
+    const merged = mergeAttentionHooks(base, "mac");
+    expect(hooksInstalled(merged)).toBe(true);
+    const before = JSON.parse(JSON.stringify(merged));
+    const removed = removeAttentionHooks(merged) as {
+      model: string;
+      env: unknown;
+      hooks: Record<string, unknown[]>;
+    };
+    expect(merged).toEqual(before); // input untouched
+    expect(hooksInstalled(removed)).toBe(false);
+    expect(removed.model).toBe("opus");
+    expect(removed.env).toEqual({ FOO: "bar" });
+    expect(removed.hooks.Notification).toEqual([foreign]); // foreign entry kept
+    expect(removed.hooks.SubagentStop).toEqual([foreign]); // never-installed event kept
+    expect(removed.hooks.Stop).toBeUndefined(); // ours-only event dropped
+    expect(removeAttentionHooks(merged)).toEqual(base); // round-trips to the original shape
+  });
+
+  it("removeAttentionHooks leaves entries without a hooks array untouched", () => {
+    const settings = { hooks: { Stop: [{ matcher: "*" }, "weird"] } };
+    const removed = removeAttentionHooks(settings) as { hooks: Record<string, unknown[]> };
+    expect(removed.hooks.Stop).toEqual([{ matcher: "*" }, "weird"]);
+  });
+
+  it("removeAttentionHooks drops the marker handler but keeps a foreign sibling in the same entry", () => {
+    const foreignHandler = { type: "command", command: "notify-send hi" };
+    const markerHandler = { type: "command", command: buildHookCommand("mac") };
+    const settings = { hooks: { Stop: [{ hooks: [foreignHandler, markerHandler] }] } };
+    const removed = removeAttentionHooks(settings) as { hooks: Record<string, unknown[]> };
+    expect(removed.hooks.Stop).toEqual([{ hooks: [foreignHandler] }]);
   });
 
   it("preserves foreign hook entries and unrelated top-level keys, without mutating input", () => {
