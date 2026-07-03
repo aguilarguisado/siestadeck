@@ -2,6 +2,15 @@ import { SIZE, colors, quotaColor } from "./theme.js";
 
 const FONT = "Helvetica, Arial, sans-serif";
 
+// Overflow guard for renderValueKey: text-anchor="middle" gives no width fit,
+// so an over-long value (e.g. an unmapped raw model id) would clip at both tile
+// edges. Longer than SHRINK drops to the small (28px) font; longer than MAX is
+// sliced with an ellipsis. Calibrated so ~8 glyphs fit the 144px tile at 28px:
+// every current caller passes <= 7-char values, so short tiles (including the
+// 7-char "log out") are untouched, while a long id degrades to e.g. "claude-…".
+const VALUE_SHRINK_AT = 7;
+const VALUE_MAX = 8;
+
 function escape(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]!));
 }
@@ -186,11 +195,17 @@ export type ValueKeyProps = {
 };
 
 export function renderValueKey({ value, unit, label, accent = colors.text, small }: ValueKeyProps): string {
-  const fontSize = small ? 28 : 38;
-  const unitSize = small ? 14 : 18;
+  let text = value;
+  let effSmall = small;
+  if (!unit) {
+    if (text.length > VALUE_MAX) text = text.slice(0, VALUE_MAX - 1) + "…";
+    if (text.length > VALUE_SHRINK_AT) effSmall = true;
+  }
+  const fontSize = effSmall ? 28 : 38;
+  const unitSize = effSmall ? 14 : 18;
   const valueText = unit
-    ? `${escape(value)}<tspan font-size="${unitSize}" dy="-4" fill="${colors.textDim}"> ${escape(unit)}</tspan>`
-    : escape(value);
+    ? `${escape(text)}<tspan font-size="${unitSize}" dy="-4" fill="${colors.textDim}"> ${escape(unit)}</tspan>`
+    : escape(text);
   return svgFrame(`
     <text x="${SIZE / 2}" y="${SIZE / 2 + 6}" text-anchor="middle" font-family="${FONT}" font-size="${fontSize}" font-weight="700" fill="${accent}">${valueText}</text>
     <text x="${SIZE / 2}" y="${SIZE - 14}" text-anchor="middle" font-family="${FONT}" font-size="13" font-weight="600" fill="${colors.textDim}" letter-spacing="1.5">${escape(label.toUpperCase())}</text>

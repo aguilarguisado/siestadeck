@@ -15,6 +15,11 @@ describe("shortName", () => {
     expect(shortName("sonnet").accent).toBe("#F2C744");
   });
 
+  it("maps the fable family to a clean label and violet accent", () => {
+    expect(shortName("claude-fable-5").name).toBe("Fable");
+    expect(shortName("claude-fable-5").accent).toBe("#9B8CE0");
+  });
+
   it("returns -- with dim accent on null", () => {
     const r = shortName(null);
     expect(r.name).toBe("--");
@@ -36,6 +41,12 @@ describe("drawActiveModel", () => {
   it("pin overrides activeModel", () => {
     const { svg } = drawActiveModel({ activeModel: "claude-sonnet-4", pinned: "opus" });
     expect(svg).toContain(">Opus<");
+  });
+
+  it("renders the fable model as a clean, unclipped label", () => {
+    const { svg } = drawActiveModel({ activeModel: "claude-fable-5" });
+    expect(svg).toContain(">Fable<");
+    expect(svg).not.toContain("claude-fable-5");
   });
 
   it("renders -- when both pin and activeModel are absent", () => {

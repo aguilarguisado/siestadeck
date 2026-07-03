@@ -156,9 +156,31 @@ describe("renderValueKey", () => {
   });
 
   it("HTML-escapes user-supplied label and value", () => {
-    const svg = renderValueKey({ value: '<script>"x"', label: "a&b<c>" });
-    expect(svg).toContain("&lt;script&gt;");
+    // Short value so the length guard does not truncate it out from under the
+    // escaping assertions — escaping and truncation are independent concerns.
+    const svg = renderValueKey({ value: `<i>&"'`, label: "a&b<c>" });
+    expect(svg).toContain("&lt;i&gt;");
     expect(svg).toContain("&amp;");
-    expect(svg).not.toContain("<script>");
+    expect(svg).toContain("&quot;");
+    expect(svg).not.toContain("<i>");
+  });
+
+  it("leaves short values at full size and unchanged", () => {
+    const svg = renderValueKey({ value: "Fable", label: "model" });
+    expect(svg).toContain('font-size="38"');
+    expect(svg).toContain(">Fable<");
+  });
+
+  it("shrinks and ellipsis-truncates an over-long value instead of clipping", () => {
+    const svg = renderValueKey({ value: "claude-unknown-99", label: "model" });
+    expect(svg).toContain('font-size="28"');
+    expect(svg).toContain("…");
+    expect(svg).not.toContain("claude-unknown-99");
+  });
+
+  it("does not shrink or truncate a value that carries a unit", () => {
+    const svg = renderValueKey({ value: "1234567890123", unit: "tok", label: "burn" });
+    expect(svg).toContain('font-size="38"');
+    expect(svg).not.toContain("…");
   });
 });
