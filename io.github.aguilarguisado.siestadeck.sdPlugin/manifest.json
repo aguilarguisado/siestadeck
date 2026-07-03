@@ -103,6 +103,21 @@
           "Image": "imgs/actions/login-logout/key"
         }
       ]
+    },
+    {
+      "Name": "Attention",
+      "UUID": "io.github.aguilarguisado.siestadeck.attention",
+      "Icon": "imgs/actions/attention/icon",
+      "Tooltip": "Alarms when a Claude Code session is waiting for you: permission prompts, questions, finished turns.",
+      "PropertyInspectorPath": "pi/attention.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/attention/key"
+        }
+      ]
     }
   ]
 }

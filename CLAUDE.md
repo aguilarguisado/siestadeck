@@ -22,7 +22,7 @@ npm run coverage   # vitest run --coverage (gated at 80% per vitest.config.ts)
 npm run pack       # create a .streamDeckPlugin distributable
 ```
 
-Correctness gates: type-checking via `rollup -c` (strict TS) and `npm run coverage` (Vitest). CI runs both on macOS and Windows. The coverage gate excludes Stream Deck SDK glue (action wrapper classes) and the heavy service classes (accounts/quota/activeSession) — their pure cores live in `*Policy.ts`/`draw/*.ts` siblings and are tested at near-100%. Don't lower the threshold without also widening the well-tested surface.
+Correctness gates: type-checking via `rollup -c` (strict TS) and `npm run coverage` (Vitest). CI runs both on macOS and Windows. The coverage gate excludes Stream Deck SDK glue (action wrapper classes) and the heavy service classes (accounts/quota/activeSession/attention) — their pure cores live in `*Policy.ts`/`draw/*.ts` siblings and are tested at near-100%. Don't lower the threshold without also widening the well-tested surface.
 
 `npm run watch` is the development happy-path: every save rebuilds and runs `streamdeck restart io.github.aguilarguisado.siestadeck`, so the plugin reloads in Stream Deck within ~1 second. No manual reload needed.
 
@@ -30,9 +30,10 @@ Correctness gates: type-checking via `rollup -c` (strict TS) and `npm run covera
 
 ```
 ~/.claude/projects/.../*.jsonl              ─┐
-Anthropic OAuth /api/oauth/usage             ├─► Services (EventEmitter snapshots)
-Keychain (mac) / DPAPI (Windows) credentials │       │
-accountsRegistryJson (paths.ts)             ─┘       │
+Anthropic OAuth /api/oauth/usage             │
+Keychain (mac) / DPAPI (Windows) credentials ├─► Services (EventEmitter snapshots)
+accountsRegistryJson (paths.ts)              │       │
+~/.claude/siestadeck/attention.jsonl (hooks)─┘       │
                                                      ▼
                                   Actions subscribe via .on("snapshot", ...)
                                                      │
@@ -48,7 +49,7 @@ accountsRegistryJson (paths.ts)             ─┘       │
 
 **The single most important rule:** *actions are stateless renderers*. They never poll, never fetch, never read files directly. They subscribe to a service snapshot and re-render. All polling, file watching, network calls, rate-limiting, and caching live in `src/services/`.
 
-`src/plugin.ts` is the entry point: registers the 5 action classes, eagerly starts `accountsService` + `quotaRegistry`, leaves `activeSessionService` lazy (it `acquire()`s on first key appear), and wires device connect/disconnect/wake events to suspend or re-arm work.
+`src/plugin.ts` is the entry point: registers the 6 action classes, eagerly starts `accountsService` + `quotaRegistry`, leaves `activeSessionService` and `attentionService` lazy (they `acquire()` on first key appear), and wires device connect/disconnect/wake events to suspend or re-arm work.
 
 ## Where to look when working in...
 

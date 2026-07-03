@@ -15,6 +15,7 @@ const ACTIONS = [
   "active-model",
   "switch-account",
   "login-logout",
+  "attention",
 ];
 
 // Property Inspector sidebar icons want light glyphs on a transparent background
