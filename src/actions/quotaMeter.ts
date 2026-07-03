@@ -10,7 +10,9 @@ import {
 } from "@elgato/streamdeck";
 
 import { toImageUri } from "../render/rasterize.js";
+import { accountsService } from "../services/accounts.js";
 import { quotaRegistry, type QuotaSnapshot } from "../services/quota.js";
+import { openTerminalWithCommand } from "../services/terminal.js";
 import { drawQuotaMeter, SIESTA_PHRASES } from "./draw/quotaMeter.js";
 
 type QuotaWindow = "5h" | "7d";
@@ -98,6 +100,15 @@ export class QuotaMeter extends SingletonAction<QuotaMeterSettings> {
   }
 
   override onKeyDown(_ev: KeyDownEvent<QuotaMeterSettings>): void {
+    // When the login is lost the account is parked in a 30-min auth backoff, so
+    // a plain refresh is a no-op. Kick off re-login instead — same flow as the
+    // Login/Logout action — then poll for the fresh credentials.
+    const snap = quotaRegistry.snapshotFor(null);
+    if (snap?.cooldownReason === "auth") {
+      openTerminalWithCommand("claude auth login");
+      accountsService.pollForNewLogin();
+      return;
+    }
     void quotaRegistry.refresh();
   }
 

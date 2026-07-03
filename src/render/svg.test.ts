@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatResetTime, renderAttention, renderQuotaMeter, renderValueKey } from "./svg.js";
+import { formatResetTime, renderAttention, renderLoginRequired, renderQuotaMeter, renderValueKey } from "./svg.js";
 
 describe("renderQuotaMeter", () => {
   it("renders a 5h meter at known utilization", () => {
@@ -72,6 +72,21 @@ describe("renderQuotaMeter", () => {
     expect(svg).toContain("WAIT 42s");
     // Top pill suppressed while cooldown owns the top slot.
     expect(svg).not.toContain('y="6"');
+  });
+});
+
+describe("renderLoginRequired", () => {
+  it("renders the sign-in tile for both windows (snapshots)", () => {
+    expect(renderLoginRequired({ window: "5h", label: "5H" })).toMatchSnapshot("5h");
+    expect(renderLoginRequired({ window: "7d", label: "7D" })).toMatchSnapshot("7d");
+  });
+
+  it("shows LOG IN and the re-auth hint, never a WAIT badge", () => {
+    const svg = renderLoginRequired({ window: "5h", label: "5H" });
+    expect(svg).toContain("LOG IN");
+    expect(svg).toContain("tap to sign in");
+    expect(svg).not.toContain("WAIT");
+    expect(svg).toContain(">5H<");
   });
 });
 

@@ -40,6 +40,12 @@ export type QuotaSnapshot = {
   fetchedAt: Date;
   error?: string;
   cooldownUntil: Date | null;
+  /**
+   * Why we're cooling down, set only when cooldownUntil is. "auth" ⇒ the login
+   * was lost (401/403 + failed refresh) and the tile should prompt re-login;
+   * "rate" ⇒ a 429, which keeps the WAIT badge.
+   */
+  cooldownReason?: BackoffReason;
 };
 
 export function asWindow(w: UsageWindow | null | undefined): QuotaWindowSnapshot | null {
