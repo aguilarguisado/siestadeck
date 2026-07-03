@@ -9,6 +9,7 @@ export function shortName(model: string | null): ModelAccent {
   if (m.includes("opus")) return { name: "Opus", accent: "#D0776C" };
   if (m.includes("haiku")) return { name: "Haiku", accent: "#E5A38A" };
   if (m.includes("sonnet")) return { name: "Sonnet", accent: "#F2C744" };
+  if (m.includes("fable")) return { name: "Fable", accent: "#9B8CE0" };
   return { name: model, accent: colors.text };
 }
 
