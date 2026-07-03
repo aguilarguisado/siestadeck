@@ -1,6 +1,7 @@
 import streamDeck from "@elgato/streamdeck";
 
 import { ActiveModel } from "./actions/activeModel.js";
+import { Attention } from "./actions/attention.js";
 import { ExtraUsage } from "./actions/extraUsage.js";
 import { LoginLogout } from "./actions/loginLogout.js";
 import { QuotaMeter } from "./actions/quotaMeter.js";
@@ -9,6 +10,7 @@ import { SwitchAccount } from "./actions/switchAccount.js";
 import { init as initRasterizer } from "./render/rasterize.js";
 import { accountsService } from "./services/accounts.js";
 import { activeSessionService } from "./services/activeSession.js";
+import { attentionService } from "./services/attention.js";
 import { quotaRegistry } from "./services/quota.js";
 
 streamDeck.logger.setLevel("info");
@@ -25,6 +27,7 @@ streamDeck.actions.registerAction(new ExtraUsage());
 streamDeck.actions.registerAction(new ActiveModel());
 streamDeck.actions.registerAction(new SwitchAccount());
 streamDeck.actions.registerAction(new LoginLogout());
+streamDeck.actions.registerAction(new Attention());
 
 quotaRegistry.on("snapshot", (snap) => {
   const tag = snap.slug ?? "active";
@@ -55,6 +58,7 @@ streamDeck.devices.onDeviceDidDisconnect(() => {
   streamDeck.logger.info("no Stream Deck devices connected — suspending background work");
   quotaRegistry.suspendAuto();
   activeSessionService.releaseAll();
+  attentionService.releaseAll();
 });
 
 streamDeck.devices.onDeviceDidConnect(() => {
