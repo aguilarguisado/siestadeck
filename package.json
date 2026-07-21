@@ -1,6 +1,6 @@
 {
   "name": "siestadeck",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Time to siesta. Live Claude Code quota, spend, and multi-account control on your Elgato Stream Deck.",
   "type": "module",
   "scripts": {
