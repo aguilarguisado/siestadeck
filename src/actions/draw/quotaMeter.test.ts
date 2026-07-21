@@ -95,6 +95,55 @@ describe("drawQuotaMeter", () => {
     expect(svg).toContain(">3d<");
   });
 
+  it("renders the fable window from perModel.fable", () => {
+    const snap = snapshot({ perModel: { fable: { utilization: 0.77, resetsAt: null } } });
+    const { svg } = drawQuotaMeter({ snap, window: "fable" });
+    expect(svg).toContain(">FABLE<");
+    expect(svg).toContain(">77<"); // 0.77 → 77%
+  });
+
+  it("renders '--' with the FABLE pill when the snapshot has no fable window", () => {
+    const { svg } = drawQuotaMeter({ snap: snapshot(), window: "fable" });
+    expect(svg).toContain(">FABLE<");
+    expect(svg).toContain(">--<");
+  });
+
+  it("falls back to '--' for window=fable when snapshot is null", () => {
+    const { svg } = drawQuotaMeter({ snap: null, window: "fable" });
+    expect(svg).toContain(">--<");
+  });
+
+  it("uses the fable window's resetsAt, not the 5h/7d ones", () => {
+    const now = 1_000_000_000_000;
+    const snap = snapshot({
+      fiveHour: { utilization: 0.5, resetsAt: new Date(now + 60_000) },
+      sevenDay: { utilization: 0.2, resetsAt: new Date(now + 24 * 3600_000) },
+      perModel: { fable: { utilization: 0.77, resetsAt: new Date(now + 3 * 24 * 3600_000) } },
+    });
+    const { svg, resetsInSeconds } = drawQuotaMeter({ snap, window: "fable", now });
+    expect(resetsInSeconds).toBe(3 * 24 * 3600);
+    expect(svg).toContain(">3d<");
+  });
+
+  it("enters siesta when the fable window hits 100%", () => {
+    const at = (utilization: number) =>
+      drawQuotaMeter({
+        snap: snapshot({ perModel: { fable: { utilization, resetsAt: null } } }),
+        window: "fable",
+      }).isSiesta;
+    expect(at(1.0)).toBe(true);
+    expect(at(0.99)).toBe(false);
+  });
+
+  it("renders the LOG IN tile with the FABLE pill on auth cooldown", () => {
+    const now = 1_000_000_000_000;
+    const snap = snapshot({ cooldownUntil: new Date(now + 30 * 60_000), cooldownReason: "auth" });
+    const { svg, cooldownSeconds } = drawQuotaMeter({ snap, window: "fable", now });
+    expect(svg).toContain("LOG IN");
+    expect(svg).toContain(">FABLE<");
+    expect(cooldownSeconds).toBe(0);
+  });
+
   it("hides the top countdown pill when resetsAt is in the past or absent", () => {
     const now = 1_000_000_000_000;
     const past = snapshot({ fiveHour: { utilization: 0.5, resetsAt: new Date(now - 1_000) } });

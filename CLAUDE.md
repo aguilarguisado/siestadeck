@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**siestadeck** — an Elgato Stream Deck plugin that turns physical Stream Deck keys into a live readout of Claude Code quota (5h / 7d Max windows), spend, active model, and a one-press multi-account switcher. Reads from local `~/.claude/` telemetry plus Anthropic's undocumented OAuth `/api/oauth/usage` endpoint, with intelligent rate-limiting. Targets macOS (validated) and Windows (CI builds; not yet validated end-to-end on a physical Windows + Stream Deck setup).
+**siestadeck** — an Elgato Stream Deck plugin that turns physical Stream Deck keys into a live readout of Claude Code quota (5h / 7d / per-model Fable weekly Max windows), spend, active model, and a one-press multi-account switcher. Reads from local `~/.claude/` telemetry plus Anthropic's undocumented OAuth `/api/oauth/usage` endpoint, with intelligent rate-limiting. Targets macOS (validated) and Windows (CI builds; not yet validated end-to-end on a physical Windows + Stream Deck setup).
 
 Stack: TypeScript (strict, ES2022, `Bundler` module resolution), Rollup bundle, `@elgato/streamdeck` SDK v2, `@resvg/resvg-wasm` for SVG-to-PNG. Node ≥20.
 

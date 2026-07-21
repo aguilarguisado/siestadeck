@@ -62,7 +62,7 @@ exports[`renderAttention > renders every mode (snapshots) > turn-done 1`] = `
 </svg>"
 `;
 
-exports[`renderLoginRequired > renders the sign-in tile for both windows (snapshots) > 5h 1`] = `
+exports[`renderLoginRequired > renders the sign-in tile for every window (snapshots) > 5h 1`] = `
 "<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">
   <rect width="144" height="144" fill="#1A100E" rx="16"/>
   
@@ -79,7 +79,7 @@ exports[`renderLoginRequired > renders the sign-in tile for both windows (snapsh
 </svg>"
 `;
 
-exports[`renderLoginRequired > renders the sign-in tile for both windows (snapshots) > 7d 1`] = `
+exports[`renderLoginRequired > renders the sign-in tile for every window (snapshots) > 7d 1`] = `
 "<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">
   <rect width="144" height="144" fill="#1A100E" rx="16"/>
   
@@ -92,6 +92,23 @@ exports[`renderLoginRequired > renders the sign-in tile for both windows (snapsh
     <text x="72" y="112" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="600" fill="#8A93A1" letter-spacing="1">tap to sign in</text>
     <rect x="48" y="116" width="48" height="22" rx="11" fill="#D0776C"/>
     <text x="72" y="132" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#0F1115" letter-spacing="1.5">7D</text>
+  
+</svg>"
+`;
+
+exports[`renderLoginRequired > renders the sign-in tile for every window (snapshots) > fable 1`] = `
+"<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">
+  <rect width="144" height="144" fill="#1A100E" rx="16"/>
+  
+    <rect x="4" y="4" width="136" height="136" rx="14" fill="none" stroke="#E5534B" stroke-width="3"/>
+    <circle cx="72" cy="36" r="13" fill="none" stroke="#E5534B" stroke-width="6"/>
+    <rect x="69" y="47" width="6" height="26" rx="1" fill="#E5534B"/>
+    <rect x="75" y="60" width="9" height="5" rx="1" fill="#E5534B"/>
+    <rect x="75" y="68" width="7" height="5" rx="1" fill="#E5534B"/>
+    <text x="72" y="98" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="23" font-weight="800" fill="#E5534B" letter-spacing="2">LOG IN</text>
+    <text x="72" y="112" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="600" fill="#8A93A1" letter-spacing="1">tap to sign in</text>
+    <rect x="39" y="116" width="66" height="22" rx="11" fill="#D0776C"/>
+    <text x="72" y="132" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#0F1115" letter-spacing="1.5">FABLE</text>
   
 </svg>"
 `;
@@ -124,6 +141,23 @@ exports[`renderQuotaMeter > renders a 7d meter at high utilization (red band) 1`
     <text x="72" y="84" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="44" font-weight="700" fill="#E5534B">90<tspan font-size="18" dy="-18" fill="#E5534B">%</tspan></text>
     <rect x="48" y="116" width="48" height="22" rx="11" fill="#D0776C"/>
     <text x="72" y="132" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#0F1115" letter-spacing="1.5">7D</text>
+    
+    
+  
+</svg>"
+`;
+
+exports[`renderQuotaMeter > renders a fable meter at known utilization 1`] = `
+"<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">
+  <rect width="144" height="144" fill="#1A100E" rx="16"/>
+  
+    <circle cx="72" cy="72" r="58" fill="none" stroke="#5C2F2A" stroke-width="12"/>
+    <circle cx="72" cy="72" r="58" fill="none" stroke="#F2C744" stroke-width="12"
+            stroke-linecap="round" stroke-dasharray="280.60705581864033 83.81769199777568"
+            transform="rotate(-90 72 72)"/>
+    <text x="72" y="84" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="44" font-weight="700" fill="#F2C744">77<tspan font-size="18" dy="-18" fill="#F2C744">%</tspan></text>
+    <rect x="39" y="116" width="66" height="22" rx="11" fill="#D0776C"/>
+    <text x="72" y="132" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#0F1115" letter-spacing="1.5">FABLE</text>
     
     
   

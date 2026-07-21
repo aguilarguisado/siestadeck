@@ -1,11 +1,11 @@
-import { renderLoginRequired, renderQuotaMeter, renderSiestaTile } from "../../render/svg.js";
+import { type MeterWindow, renderLoginRequired, renderQuotaMeter, renderSiestaTile } from "../../render/svg.js";
 import type { QuotaSnapshot } from "../../services/quota.js";
 
 export const SIESTA_PHRASES = ["siesta", "descansa", "suficiente", "disfruta"] as const;
 
 export type QuotaMeterDrawInput = {
   snap: QuotaSnapshot | null;
-  window?: "5h" | "7d";
+  window?: MeterWindow;
   now?: number;
   /** Index into SIESTA_PHRASES; advanced by the action while in siesta state. */
   phraseIndex?: number;
@@ -26,8 +26,9 @@ export type QuotaMeterDrawResult = {
  * and timers; we test this wrapper-less core directly.
  */
 export function drawQuotaMeter({ snap, window, now, phraseIndex, descentProgress }: QuotaMeterDrawInput): QuotaMeterDrawResult {
-  const win: "5h" | "7d" = window ?? "5h";
-  const data = snap == null ? null : win === "5h" ? snap.fiveHour : snap.sevenDay;
+  const win: MeterWindow = window ?? "5h";
+  const data =
+    snap == null ? null : win === "5h" ? snap.fiveHour : win === "7d" ? snap.sevenDay : snap.perModel.fable ?? null;
   const nowMs = now ?? Date.now();
   const cooldownSeconds = snap?.cooldownUntil
     ? Math.max(0, Math.ceil((snap.cooldownUntil.getTime() - nowMs) / 1000))

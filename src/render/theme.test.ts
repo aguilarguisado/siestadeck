@@ -38,4 +38,10 @@ describe("colors and SIZE constants", () => {
     expect(colors.warn).toMatch(/^#[0-9A-Fa-f]{6}$/);
     expect(colors.danger).toMatch(/^#[0-9A-Fa-f]{6}$/);
   });
+
+  it("exposes a full token trio per meter window", () => {
+    for (const key of ["bg5h", "bg7d", "bgFable", "ring5h", "ring7d", "ringFable", "accent", "accent7d", "accentFable"] as const) {
+      expect(colors[key]).toMatch(/^#[0-9A-Fa-f]{6}$/);
+    }
+  });
 });
