@@ -4,7 +4,7 @@ All polling, file watching, network calls, keychain I/O, and rate-limiting live 
 
 ## The three data sources
 
-1. **Local telemetry** — `~/.claude/projects/<slug>/*.jsonl` (live session transcripts), tailed by `activeSession.ts` to surface the active model. Separately, `attention.ts` tails `~/.claude/siestadeck/attention.jsonl`, which Claude Code **hooks** (installed into `~/.claude/settings.json` by the Attention action's key press) append their stdin payload to — capped at 2 KB/line; truncated lines are recovered by the regex fallback in `attentionPolicy.ts`. Verified empirically: permission dialogs, AskUserQuestion, and plan approval all emit `Notification` with `notification_type: "permission_prompt"`; `PreToolUse` fires *before* the permission dialog, so the post-approval un-block comes from `PostToolUse` or `Stop`.
+1. **Local telemetry** — `~/.claude/projects/<slug>/*.jsonl` (live session transcripts), tailed by `activeSession.ts` to surface the active model.
 2. **OS credential store** — abstracted by `credentialStore.ts`. On macOS, the `Claude Code-credentials` keychain entry is what Claude Code itself reads; `siestadeck-token-<slug>` is the per-account stash this plugin maintains via `security(1)`. On Windows, the active credentials live in `~/.claude/.credentials.json` (read by `keychain.ts`) and per-account stashes are DPAPI-encrypted files under `%APPDATA%\siestadeck\creds\` (via PowerShell `ProtectedData.Protect/Unprotect`). Service constant `CLAUDE_KEYCHAIN_SERVICE` and the per-account prefix `siestadeck-token` are defined in `keychain.ts:3` and `accounts.ts:14`.
 3. **Anthropic OAuth** — undocumented `https://api.anthropic.com/api/oauth/usage` and `/profile` endpoints, both requiring `anthropic-beta: oauth-2025-04-20`. See `quota.ts:9,66` and `accounts.ts:218-222`.
 
@@ -15,7 +15,6 @@ All polling, file watching, network calls, keychain I/O, and rate-limiting live 
 | `accountsService` | eager | `plugin.ts` | Must be ready before any action queries it. |
 | `quotaRegistry` | eager (timers off by default) | `plugin.ts` | Per-account state needs to exist; the network polling itself is opt-in. |
 | `activeSessionService` | **lazy** | `acquire(id)` from any action that needs it | Tails JSONL files; spinning up a watcher for a key the user never displays is wasteful. |
-| `attentionService` | **lazy** | `acquire(id)` from the Attention action | 1s tail-poll of the hook events file + 10s settings.json install check; rotates the file at 1 MB (rename + grace-window drain). |
 
 Lazy services use **reference-counted consumers**: the watcher starts on the first `acquire()` and stops when the last consumer `release()`s. See `activeSession.ts`. `releaseAll()` exists for the device-disconnect path in `plugin.ts`.
 

@@ -21,7 +21,6 @@ Each action in `manifest.json` has a `UUID` that **must** match the `@action({ U
 | `io.github.aguilarguisado.siestadeck.active-model` | `ActiveModel` | `src/actions/activeModel.ts` |
 | `io.github.aguilarguisado.siestadeck.switch-account` | `SwitchAccount` | `src/actions/switchAccount.ts` |
 | `io.github.aguilarguisado.siestadeck.login-logout` | `LoginLogout` | `src/actions/loginLogout.ts` |
-| `io.github.aguilarguisado.siestadeck.attention` | `Attention` | `src/actions/attention.ts` |
 
 Adding an action requires **all three**: a manifest entry, a class with the matching `@action` UUID, and a `streamDeck.actions.registerAction(...)` call in `src/plugin.ts:17-21`.
 

@@ -4,6 +4,12 @@ All notable changes to siestadeck are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+- **Attention** action — the alerting tile that flashed when a Claude Code session was waiting on you (permission prompts, questions, finished turns). Detection proved unreliable, and lighting it up meant Claude Code hooks firing on every event, machine-wide — too much cost for too little signal. siestadeck stays focused on quota, spend, model, and account switching.
+  - **Cleanup for source builds:** released binaries (v0.0.1) never shipped this action, so most users are unaffected. If you built `main` from source and pressed the Attention key at least once, it installed hooks into `~/.claude/settings.json` — and the in-app "Uninstall hooks" button is gone with the action. Remove them by hand: delete the seven hook entries whose command appends to `~/.claude/siestadeck/attention.jsonl` (under the `Notification`, `Stop`, `UserPromptSubmit`, `PreToolUse`, `SessionStart`, `SessionEnd`, and `PostToolUse` events), then delete the `~/.claude/siestadeck/` directory.
+
 ## [0.0.1] - 2026-05-14
 
 ### Added
