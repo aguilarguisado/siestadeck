@@ -6,9 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-22
+
+### Added
+- **Quota Meter — Fable weekly window** — a third window option alongside 5h and 7d, surfacing claude.ai's per-model **Fable** weekly Max limit as the same radial gauge, with a `FABLE` label pill, reset countdown, and the siesta / `WAIT` / `LOG IN` states. Reads the new `limits` array (`kind: "weekly_scoped"`), since the legacy `seven_day_opus` / `seven_day_sonnet` fields now return `null`.
+
 ### Removed
 - **Attention** action — the alerting tile that flashed when a Claude Code session was waiting on you (permission prompts, questions, finished turns). Detection proved unreliable, and lighting it up meant Claude Code hooks firing on every event, machine-wide — too much cost for too little signal. siestadeck stays focused on quota, spend, model, and account switching.
   - **Cleanup for source builds:** released binaries (v0.0.1) never shipped this action, so most users are unaffected. If you built `main` from source and pressed the Attention key at least once, it installed hooks into `~/.claude/settings.json` — and the in-app "Uninstall hooks" button is gone with the action. Remove them by hand: delete the seven hook entries whose command appends to `~/.claude/siestadeck/attention.jsonl` (under the `Notification`, `Stop`, `UserPromptSubmit`, `PreToolUse`, `SessionStart`, `SessionEnd`, and `PostToolUse` events), then delete the `~/.claude/siestadeck/` directory.
+
+### Fixed
+- **Quota Meter now shows a distinct "LOG IN" tile when your OAuth login is lost**, instead of an amber `WAIT 1800s` badge that was indistinguishable from a real rate limit. Pressing the key while logged out runs `claude auth login` and polls for the new credentials, and the gauge recovers within seconds of re-login rather than staying parked for the 30-minute auth cooldown. A genuine `429` still shows the `WAIT Xs` badge.
+- **Active Model tile no longer clips the Fable model name** — `claude-fable-5` rendered as `ude-fabl`. The Fable family now maps to a clean violet `Fable` label, and the shared `renderValueKey` shrinks and ellipsizes any overflowing value instead of edge-clipping.
 
 ## [0.0.1] - 2026-05-14
 
