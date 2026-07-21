@@ -29,7 +29,7 @@ Reference implementation: `src/actions/quotaMeter.ts:30-130`.
 
 1. **Never fetch, poll, or read files inside an action.** Subscribe to a service snapshot. The single quota meter lives at `quotaMeter.ts:36-39`; never inline equivalents elsewhere.
 2. **Track `this.visible` by `action.id`**, not by some other key. `onWillAppear` may fire multiple times for multi-button setups (one event per physical key); each gets its own id.
-3. **Lazy services require `.acquire(action.id)` in `onWillAppear` and `.release(action.id)` in `onWillDisappear`.** Applies to `activeSessionService` (see `src/actions/activeModel.ts` for the consumer side) and `attentionService` (`src/actions/attention.ts`). The `quotaRegistry` and `accountsService` are eager — no acquire needed.
+3. **Lazy services require `.acquire(action.id)` in `onWillAppear` and `.release(action.id)` in `onWillDisappear`.** Applies to `activeSessionService` (see `src/actions/activeModel.ts` for the consumer side). The `quotaRegistry` and `accountsService` are eager — no acquire needed.
 4. **Clear per-key timers in `onWillDisappear`.** See the cooldown timer pattern at `quotaMeter.ts:115-129` — a 1-second tick re-renders the "WAIT Xs" countdown badge during 429 backoff. Leaking these keeps the event loop alive after a key disappears.
 5. **Don't call `setTitle()` with anything but `""`.** siestadeck renders text inside the SVG so it can use Helvetica + theme colors; Stream Deck's overlay title is always cleared (`quotaMeter.ts:46,87`).
 6. **Render via `renderXxx(...)` (in `src/render/svg.ts`) → `toImageUri(svg)` → `action.setImage(uri)`.** Don't construct SVG strings inline in actions.

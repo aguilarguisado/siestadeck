@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatResetTime, renderAttention, renderLoginRequired, renderQuotaMeter, renderValueKey } from "./svg.js";
+import { formatResetTime, renderLoginRequired, renderQuotaMeter, renderValueKey } from "./svg.js";
 
 describe("renderQuotaMeter", () => {
   it("renders a 5h meter at known utilization", () => {
@@ -139,41 +139,6 @@ describe("formatResetTime", () => {
   it("crosses the day boundary cleanly", () => {
     expect(formatResetTime(24 * 3600 - 60)).toBe("23:59");
     expect(formatResetTime(24 * 3600)).toBe("1d");
-  });
-});
-
-describe("renderAttention", () => {
-  it("renders every mode (snapshots)", () => {
-    expect(renderAttention({ mode: "setup" })).toMatchSnapshot("setup");
-    expect(renderAttention({ mode: "quiet" })).toMatchSnapshot("quiet");
-    expect(renderAttention({ mode: "blocked", flashOn: true, label: "siesta" })).toMatchSnapshot("blocked-on");
-    expect(renderAttention({ mode: "blocked", flashOn: false, label: "siesta" })).toMatchSnapshot("blocked-off");
-    expect(renderAttention({ mode: "turn_done", label: "siesta" })).toMatchSnapshot("turn-done");
-    expect(renderAttention({ mode: "idle" })).toMatchSnapshot("idle");
-  });
-
-  it("blocked flash frames swap the danger color between fill and glyph", () => {
-    const on = renderAttention({ mode: "blocked", flashOn: true });
-    const off = renderAttention({ mode: "blocked", flashOn: false });
-    expect(on).toContain('fill="#E5534B"'); // solid danger background
-    expect(off).toContain('stroke="#E5534B"'); // danger ring on dark background
-    expect(on).not.toBe(off);
-  });
-
-  it("shows a count badge above one session, capped at 9+", () => {
-    expect(renderAttention({ mode: "blocked", sessionCount: 1 })).not.toContain('cy="26"');
-    expect(renderAttention({ mode: "blocked", sessionCount: 3 })).toContain(">3<");
-    expect(renderAttention({ mode: "idle", sessionCount: 12 })).toContain(">9+<");
-  });
-
-  it("HTML-escapes the label", () => {
-    const svg = renderAttention({ mode: "turn_done", label: "a&b<c>" });
-    expect(svg).toContain("a&amp;b&lt;c&gt;");
-    expect(svg).not.toContain("<c>");
-  });
-
-  it("setup mode carries the install hint", () => {
-    expect(renderAttention({ mode: "setup" })).toContain("press to install");
   });
 });
 
