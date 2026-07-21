@@ -22,9 +22,34 @@ function svgFrame(inner: string, bg: string = colors.bg): string {
 </svg>`;
 }
 
+/** Which quota window a meter-family tile renders. Mirrors the Quota Meter's
+ * persisted `window` setting value; the bottom pill label is derived from it. */
+export type MeterWindow = "5h" | "7d" | "fable";
+
+// Per-window color tokens. An exhaustive switch (no default) so adding a new
+// window value fails type-checking here instead of silently reusing another
+// window's colors.
+function windowTokens(window: MeterWindow): { pill: string; track: string; bg: string } {
+  switch (window) {
+    case "5h":
+      return { pill: colors.accent, track: colors.ring5h, bg: colors.bg5h };
+    case "7d":
+      return { pill: colors.accent7d, track: colors.ring7d, bg: colors.bg7d };
+    case "fable":
+      return { pill: colors.accentFable, track: colors.ringFable, bg: colors.bgFable };
+  }
+}
+
+// Bottom label pill width: the fixed 48px fits the 2-char "5H"/"7D" labels;
+// longer labels ("FABLE") widen it. Two-char labels must stay at exactly 48 so
+// the pre-Fable tile renders stay byte-identical (rasterize cache + snapshots).
+function labelPillWidth(label: string): number {
+  return Math.max(48, 16 + label.length * 10);
+}
+
 export type QuotaMeterProps = {
   utilization: number | null;
-  window: "5h" | "7d";
+  window: MeterWindow;
   label: string;
   /** Seconds remaining on a 429/cooldown — when > 0, render a WAIT badge. */
   cooldownSeconds?: number;
@@ -49,7 +74,7 @@ export function formatResetTime(seconds: number | null | undefined): string {
 }
 
 export type SiestaTileProps = {
-  window: "5h" | "7d";
+  window: MeterWindow;
   phrase: string;
   resetsInSeconds?: number | null;
   /** Persiana descent progress (0..1) — looped 0→1→0 by the action. */
@@ -91,7 +116,7 @@ export function renderSiestaTile({ window, phrase, resetsInSeconds, descentProgr
   const winW = 100;
   const winH = 64;
 
-  const pillColor = window === "5h" ? colors.accent : colors.accent7d;
+  const pillColor = windowTokens(window).pill;
   const timeText = formatResetTime(resetsInSeconds);
   const pillH = 22;
   const pillW = 48;
@@ -136,11 +161,9 @@ export function renderQuotaMeter({ utilization, window, label, cooldownSeconds, 
   const display = utilization == null ? "--" : `${Math.round(pct * 100)}`;
   const suffix = utilization == null ? "" : "%";
 
-  const pillColor = window === "5h" ? colors.accent : colors.accent7d;
-  const trackColor = window === "5h" ? colors.ring5h : colors.ring7d;
-  const bgColor = window === "5h" ? colors.bg5h : colors.bg7d;
+  const { pill: pillColor, track: trackColor, bg: bgColor } = windowTokens(window);
   const pillH = 22;
-  const pillW = 48;
+  const pillW = labelPillWidth(label);
   const pillX = (SIZE - pillW) / 2;
   const bottomPillY = SIZE - pillH - 6;
   const topPillY = 6;
@@ -187,8 +210,8 @@ export function renderQuotaMeter({ utilization, window, label, cooldownSeconds, 
 }
 
 export type LoginRequiredProps = {
-  window: "5h" | "7d";
-  /** Bottom pill label, e.g. "5H" / "7D" — mirrors the gauge for family consistency. */
+  window: MeterWindow;
+  /** Bottom pill label, e.g. "5H" / "7D" / "FABLE" — mirrors the gauge for family consistency. */
   label: string;
 };
 
@@ -200,10 +223,9 @@ export type LoginRequiredProps = {
  * static (no countdown), so the exact-string rasterize cache stays warm.
  */
 export function renderLoginRequired({ window, label }: LoginRequiredProps): string {
-  const pillColor = window === "5h" ? colors.accent : colors.accent7d;
-  const bgColor = window === "5h" ? colors.bg5h : colors.bg7d;
+  const { pill: pillColor, bg: bgColor } = windowTokens(window);
   const pillH = 22;
-  const pillW = 48;
+  const pillW = labelPillWidth(label);
   const pillX = (SIZE - pillW) / 2;
   const bottomPillY = SIZE - pillH - 6;
 

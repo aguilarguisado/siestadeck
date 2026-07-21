@@ -7,11 +7,30 @@ import {
   clampAutoInterval,
   computeBackoffMs,
   decideRefresh,
+  fableUsageWindowFromLimits,
   MAX_BACKOFF_MS,
   MIN_AUTO_POLL_MS,
   MIN_BACKOFF_MS,
   MIN_REFRESH_GAP_MS,
+  type UsageLimit,
 } from "./quotaPolicy.js";
+
+// Shape captured from the live /api/oauth/usage endpoint (2026-07-21). The
+// Fable weekly bucket rides the `limits` array as kind "weekly_scoped" with a
+// model scope; the legacy seven_day_opus/seven_day_sonnet fields are null.
+const LIVE_LIMITS: UsageLimit[] = [
+  { kind: "session", group: "session", percent: 52, severity: "normal", resets_at: "2026-07-21T19:30:00.337054+00:00", scope: null, is_active: false },
+  { kind: "weekly_all", group: "weekly", percent: 63, severity: "normal", resets_at: "2026-07-24T07:00:00.337077+00:00", scope: null, is_active: false },
+  {
+    kind: "weekly_scoped",
+    group: "weekly",
+    percent: 77,
+    severity: "warning",
+    resets_at: "2026-07-24T07:00:00.337368+00:00",
+    scope: { model: { id: null, display_name: "Fable" }, surface: null },
+    is_active: true,
+  },
+];
 
 describe("asWindow", () => {
   it("returns null for missing input", () => {
@@ -34,6 +53,66 @@ describe("asWindow", () => {
 
   it("leaves resetsAt null when resets_at is null", () => {
     expect(asWindow({ utilization: 10, resets_at: null })?.resetsAt).toBeNull();
+  });
+});
+
+describe("fableUsageWindowFromLimits", () => {
+  it("picks the model-scoped weekly entry from the live payload shape", () => {
+    const w = fableUsageWindowFromLimits(LIVE_LIMITS);
+    expect(w).toEqual({ utilization: 77, resets_at: "2026-07-24T07:00:00.337368+00:00" });
+    // The microsecond +00:00 timestamps parse into valid Dates via asWindow.
+    const snap = asWindow(w);
+    expect(snap?.utilization).toBeCloseTo(0.77, 6);
+    expect(snap?.resetsAt).toBeInstanceOf(Date);
+    expect(snap?.resetsAt?.toISOString()).toBe("2026-07-24T07:00:00.337Z");
+  });
+
+  it("returns null when limits is missing (older API responses)", () => {
+    expect(fableUsageWindowFromLimits(null)).toBeNull();
+    expect(fableUsageWindowFromLimits(undefined)).toBeNull();
+    expect(fableUsageWindowFromLimits([])).toBeNull();
+  });
+
+  it("returns null when no weekly_scoped entry exists", () => {
+    expect(fableUsageWindowFromLimits(LIVE_LIMITS.slice(0, 2))).toBeNull();
+  });
+
+  it("ignores weekly_scoped entries without a model scope", () => {
+    const noModel: UsageLimit[] = [
+      { kind: "weekly_scoped", percent: 80, resets_at: null, scope: null },
+      { kind: "weekly_scoped", percent: 81, resets_at: null, scope: { model: null } },
+    ];
+    expect(fableUsageWindowFromLimits(noModel)).toBeNull();
+  });
+
+  it("prefers the entry whose model name matches fable, regardless of order", () => {
+    const two: UsageLimit[] = [
+      { kind: "weekly_scoped", percent: 20, resets_at: null, scope: { model: { id: null, display_name: "Opus" } } },
+      { kind: "weekly_scoped", percent: 77, resets_at: null, scope: { model: { id: null, display_name: "Fable" } } },
+    ];
+    expect(fableUsageWindowFromLimits(two)?.utilization).toBe(77);
+  });
+
+  it("falls back to the first model-scoped entry when no name matches fable", () => {
+    const renamed: UsageLimit[] = [
+      { kind: "weekly_scoped", percent: 33, resets_at: null, scope: { model: { id: null, display_name: "Mythos" } } },
+      { kind: "weekly_scoped", percent: 44, resets_at: null, scope: { model: { id: null, display_name: "Opus" } } },
+    ];
+    expect(fableUsageWindowFromLimits(renamed)?.utilization).toBe(33);
+  });
+
+  it("returns null when percent is null (the cast is unvalidated — degrade, don't throw)", () => {
+    const nullPercent: UsageLimit[] = [
+      { kind: "weekly_scoped", percent: null, resets_at: "2026-07-24T07:00:00.337368+00:00", scope: { model: { id: null, display_name: "Fable" } } },
+    ];
+    expect(fableUsageWindowFromLimits(nullPercent)).toBeNull();
+  });
+
+  it("keeps resets_at null when the entry has a percent but no reset", () => {
+    const noReset: UsageLimit[] = [
+      { kind: "weekly_scoped", percent: 77, resets_at: null, scope: { model: { id: null, display_name: "Fable" } } },
+    ];
+    expect(fableUsageWindowFromLimits(noReset)).toEqual({ utilization: 77, resets_at: null });
   });
 });
 
@@ -86,7 +165,26 @@ describe("buildSnapshot", () => {
     expect(snap.slug).toBeNull();
     expect(snap.perModel.opus).toBeUndefined();
     expect(snap.perModel.sonnet).toBeUndefined();
+    expect(snap.perModel.fable).toBeUndefined();
     expect(snap.extraUsage).toBeUndefined();
+  });
+
+  it("maps the Fable weekly window from the limits array (current API shape)", () => {
+    const snap = buildSnapshot(
+      null,
+      {
+        five_hour: { utilization: 52, resets_at: "2026-07-21T19:30:00.337054+00:00" },
+        seven_day: { utilization: 63, resets_at: "2026-07-24T07:00:00.337077+00:00" },
+        seven_day_opus: null,
+        seven_day_sonnet: null,
+        limits: LIVE_LIMITS,
+      },
+      now,
+    );
+    expect(snap.perModel.fable?.utilization).toBeCloseTo(0.77, 6);
+    expect(snap.perModel.fable?.resetsAt).toBeInstanceOf(Date);
+    expect(snap.perModel.opus).toBeUndefined();
+    expect(snap.perModel.sonnet).toBeUndefined();
   });
 });
 

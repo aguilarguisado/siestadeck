@@ -10,12 +10,13 @@ import {
 } from "@elgato/streamdeck";
 
 import { toImageUri } from "../render/rasterize.js";
+import type { MeterWindow } from "../render/svg.js";
 import { accountsService } from "../services/accounts.js";
 import { quotaRegistry, type QuotaSnapshot } from "../services/quota.js";
 import { openTerminalWithCommand } from "../services/terminal.js";
 import { drawQuotaMeter, SIESTA_PHRASES } from "./draw/quotaMeter.js";
 
-type QuotaWindow = "5h" | "7d";
+type QuotaWindow = MeterWindow;
 
 type QuotaMeterSettings = {
   window?: QuotaWindow;

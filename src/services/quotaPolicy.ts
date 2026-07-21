@@ -9,11 +9,26 @@ export const IDLE_THRESHOLD_MS = 20 * 60_000;
 export const UNAUTHORIZED_BACKOFF_MS = 30 * 60_000;
 
 export type UsageWindow = { utilization: number; resets_at: string | null };
+
+// One entry of the newer `limits` array. `kind` stays a plain string — the
+// response body is an unvalidated cast (quota.ts), so a literal union would be
+// false confidence about what the API actually sends.
+export type UsageLimit = {
+  kind: string; // "session" | "weekly_all" | "weekly_scoped" | future
+  group?: string | null;
+  percent: number | null;
+  resets_at: string | null;
+  severity?: string | null;
+  scope?: { model?: { id: string | null; display_name: string | null } | null; surface?: unknown } | null;
+  is_active?: boolean;
+};
+
 export type UsageResponse = {
   five_hour: UsageWindow;
   seven_day: UsageWindow;
   seven_day_opus?: UsageWindow | null;
   seven_day_sonnet?: UsageWindow | null;
+  limits?: UsageLimit[] | null;
   extra_usage?: {
     is_enabled: boolean;
     monthly_limit: number | null;
@@ -29,7 +44,7 @@ export type QuotaSnapshot = {
   slug: string | null;
   fiveHour: QuotaWindowSnapshot | null;
   sevenDay: QuotaWindowSnapshot | null;
-  perModel: { opus?: QuotaWindowSnapshot; sonnet?: QuotaWindowSnapshot };
+  perModel: { opus?: QuotaWindowSnapshot; sonnet?: QuotaWindowSnapshot; fable?: QuotaWindowSnapshot };
   extraUsage?: {
     enabled: boolean;
     usedCredits: number | null;
@@ -56,6 +71,23 @@ export function asWindow(w: UsageWindow | null | undefined): QuotaWindowSnapshot
   };
 }
 
+/**
+ * Extract the Fable per-model weekly window from the `limits` array. The API
+ * reports it as kind "weekly_scoped" with a model scope (the legacy
+ * seven_day_opus/seven_day_sonnet fields now come back null). Prefer the entry
+ * whose model display name matches /fable/i, falling back to the first
+ * model-scoped weekly entry so a model rename degrades gracefully instead of
+ * silently blanking the tile. Returns the raw UsageWindow shape so the 0-100 →
+ * 0-1 normalization stays in asWindow.
+ */
+export function fableUsageWindowFromLimits(limits: UsageLimit[] | null | undefined): UsageWindow | null {
+  if (!limits) return null;
+  const scoped = limits.filter((l) => l.kind === "weekly_scoped" && l.scope?.model != null);
+  const pick = scoped.find((l) => /fable/i.test(l.scope?.model?.display_name ?? "")) ?? scoped[0];
+  if (!pick || typeof pick.percent !== "number") return null;
+  return { utilization: pick.percent, resets_at: pick.resets_at ?? null };
+}
+
 export function buildSnapshot(
   slug: string | null,
   data: UsageResponse,
@@ -66,8 +98,9 @@ export function buildSnapshot(
     fiveHour: asWindow(data.five_hour),
     sevenDay: asWindow(data.seven_day),
     perModel: {
-      opus: asWindow(data.seven_day_opus) ?? undefined,
-      sonnet: asWindow(data.seven_day_sonnet) ?? undefined,
+      opus: asWindow(data.seven_day_opus) ?? undefined, // legacy: the API now sends null
+      sonnet: asWindow(data.seven_day_sonnet) ?? undefined, // legacy: the API now sends null
+      fable: asWindow(fableUsageWindowFromLimits(data.limits)) ?? undefined,
     },
     extraUsage: data.extra_usage
       ? {

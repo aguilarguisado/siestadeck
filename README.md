@@ -16,13 +16,13 @@ siestadeck turns physical Stream Deck keys into a live readout of your Claude Co
 
 ## Why siestadeck
 
-- **Glanceable quota.** See your 5-hour and 7-day Max windows without opening a terminal or the Claude app.
+- **Glanceable quota.** See your 5-hour, 7-day, and per-model Fable weekly Max windows without opening a terminal or the Claude app.
 - **Safe by default.** No background polling unless you explicitly enable it. Manual refresh on key press; minimum 5-minute interval when auto is on; automatic backoff on `429`.
 - **One-press account swap.** Keep your personal and work Claude logins on the same deck; switch between them instantly without a browser round-trip.
 
 Tested on Stream Deck MK.2 (15 keys) on macOS. Designed to also work on XL, +, Mini, Neo, and Pedal. Windows support is in the codebase and CI builds green, but hasn't been validated end-to-end on a physical Windows + Stream Deck setup — community validation welcome.
 
-> **Heads up on the quota endpoint.** The 5h / 7d numbers come from an undocumented OAuth usage endpoint that Anthropic uses internally. It is aggressively rate-limited and may change without notice. siestadeck never polls it on a tight loop: refresh is **manual by default**, and the optional background poll is capped at one request every 5 minutes per account. Using undocumented endpoints is at your own risk — see the [Disclaimer](#disclaimer) below.
+> **Heads up on the quota endpoint.** The 5h / 7d / Fable weekly numbers come from an undocumented OAuth usage endpoint that Anthropic uses internally. It is aggressively rate-limited and may change without notice. siestadeck never polls it on a tight loop: refresh is **manual by default**, and the optional background poll is capped at one request every 5 minutes per account. Using undocumented endpoints is at your own risk — see the [Disclaimer](#disclaimer) below.
 
 ## Install
 
@@ -58,7 +58,7 @@ siestadeck ships five actions. They appear in the Stream Deck sidebar under thei
 
 | Action | What it shows | Press to | PI options |
 |---|---|---|---|
-| **Quota Meter** | Radial 5h or 7d quota %, color-coded green/amber/red | Force-refresh the quota | Window, auto-poll on/off |
+| **Quota Meter** | Radial 5h, 7d, or Fable weekly quota %, color-coded green/amber/red | Force-refresh the quota | Window, auto-poll on/off |
 | **Extra Usage** | Real pay-as-you-go spend billed beyond your Max plan this month, with the monthly cap | Force-refresh the quota | — |
 | **Active Model** | Current model (Opus / Sonnet / Haiku) with version | Cycle the default model | — |
 | **Switch Account** | Active account or "→ next" hint | Cycle or jump to a specific account | Mode, target |
@@ -97,7 +97,7 @@ siestadeck is a local utility. It does not phone home, does not collect analytic
 
 - **Reads** your Claude Code OAuth token from the OS credential store — macOS Keychain entry `Claude Code-credentials`, or on Windows the `claude` CLI's `~/.claude/.credentials.json`. Written by Anthropic's `claude` CLI, not by this plugin.
 - **Reads** `~/.claude/projects/*/*.jsonl` transcripts from your local disk to surface the active model.
-- **Sends** authenticated `GET` requests to `https://api.anthropic.com/api/oauth/usage` with that token in the `Authorization` header. The response carries your 5h/7d quota and your pay-as-you-go extra-usage spend. No other data is sent; no other endpoint is contacted.
+- **Sends** authenticated `GET` requests to `https://api.anthropic.com/api/oauth/usage` with that token in the `Authorization` header. The response carries your 5h/7d quota, per-model weekly limits (Fable), and your pay-as-you-go extra-usage spend. No other data is sent; no other endpoint is contacted.
 - **Writes** per-account credentials so you can switch without re-logging in. macOS: Keychain entries named `siestadeck-token-<slug>`. Windows: DPAPI-encrypted files under `%APPDATA%\siestadeck\creds\` (each blob is encrypted with the Windows user's DPAPI key — only that account can decrypt).
 - **Writes** an account registry containing only display name, email, slug, color, and tier — no tokens. Path: `~/.config/siestadeck/accounts.json` (macOS) or `%APPDATA%\siestadeck\accounts.json` (Windows).
 - **Opens** Terminal.app via `osascript` (macOS) or `cmd /k` (Windows) for OAuth login/logout flows so you can complete the browser auth round-trip yourself.
@@ -110,7 +110,7 @@ The **Extra Usage** action shows a real dollar figure — not an estimate. It co
 
 A few things to know:
 
-- If you stay within your 5h / 7d Max windows and have never enabled pay-as-you-go, this reads `off` — there is no overage to show.
+- If you stay within your Max plan windows (5h / 7d / Fable weekly) and have never enabled pay-as-you-go, this reads `off` — there is no overage to show.
 - It is **not** "what your usage would have cost on the API," and it does not include the value of your subscription itself. It is purely the metered overage.
 - It refreshes on the same endpoint and the same schedule as the Quota Meter — manual by default, optional 5-minute background poll.
 

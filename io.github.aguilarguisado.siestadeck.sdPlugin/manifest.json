@@ -2,7 +2,7 @@
   "Name": "siestadeck",
   "Version": "0.0.1.0",
   "Author": "Juan",
-  "Description": "Time to siesta. Live Claude Code quota, spend, and multi-account control on your Stream Deck. See your 5h/7d Max limits at a glance and swap accounts in one press.",
+  "Description": "Time to siesta. Live Claude Code quota, spend, and multi-account control on your Stream Deck. See your 5h, 7d, and Fable weekly Max limits at a glance and swap accounts in one press.",
   "Category": "siestadeck",
   "CategoryIcon": "imgs/plugin/category-icon",
   "Icon": "imgs/plugin/marketplace",
@@ -32,7 +32,7 @@
       "Name": "Quota Meter",
       "UUID": "io.github.aguilarguisado.siestadeck.quota-meter",
       "Icon": "imgs/actions/quota-meter/icon",
-      "Tooltip": "Live 5h or 7d Claude Max quota percentage.",
+      "Tooltip": "Live 5h, 7d, or Fable weekly Claude Max quota percentage.",
       "PropertyInspectorPath": "pi/quotaMeter.html",
       "Controllers": [
         "Keypad"

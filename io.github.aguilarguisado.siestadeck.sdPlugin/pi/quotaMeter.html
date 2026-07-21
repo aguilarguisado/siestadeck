@@ -10,6 +10,7 @@
     <sdpi-select setting="window" default="5h">
       <option value="5h">5-hour rolling</option>
       <option value="7d">7-day rolling</option>
+      <option value="fable">Fable weekly (per-model)</option>
     </sdpi-select>
   </sdpi-item>
   <sdpi-item label="Auto-refresh">
@@ -20,7 +21,7 @@
   </sdpi-item>
   <sdpi-item label="">
     <sdpi-textfield-typography>
-      Always reports the active logged-in account. Default is manual-only: pressing the key refreshes the quota. Turn on auto-refresh to poll in the background (default 15 minutes, 5-minute hard floor). Auto-refresh ticks are skipped automatically when Claude Code has been idle for 20+ minutes.
+      Always reports the active logged-in account. "Fable weekly" shows the model-scoped weekly limit from the usage panel. Default is manual-only: pressing the key refreshes the quota. Turn on auto-refresh to poll in the background (default 15 minutes, 5-minute hard floor). Auto-refresh ticks are skipped automatically when Claude Code has been idle for 20+ minutes.
     </sdpi-textfield-typography>
   </sdpi-item>
 </body>

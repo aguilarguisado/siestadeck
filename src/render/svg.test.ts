@@ -18,6 +18,27 @@ describe("renderQuotaMeter", () => {
     expect(svg).toMatchSnapshot();
   });
 
+  it("renders a fable meter at known utilization", () => {
+    const svg = renderQuotaMeter({ utilization: 0.77, window: "fable", label: "FABLE" });
+    expect(svg).toMatchSnapshot();
+    expect(svg).toContain(">FABLE<");
+  });
+
+  it("renders the unknown state for the fable window", () => {
+    const svg = renderQuotaMeter({ utilization: null, window: "fable", label: "FABLE" });
+    expect(svg).toContain(">--<");
+    expect(svg).toContain(">FABLE<");
+  });
+
+  it("widens the label pill for FABLE but keeps the 2-char pills at 48px", () => {
+    const fable = renderQuotaMeter({ utilization: 0.77, window: "fable", label: "FABLE" });
+    const fiveH = renderQuotaMeter({ utilization: 0.42, window: "5h", label: "5H" });
+    // Pill width must stay byte-identical for pre-existing labels: the
+    // rasterize LRU caches by exact SVG string and the snapshots above pin it.
+    expect(fable).toContain('width="66"');
+    expect(fiveH).toContain('width="48"');
+  });
+
   it("renders a WAIT cooldown badge when cooldownSeconds > 0", () => {
     const svg = renderQuotaMeter({ utilization: 0.5, window: "5h", label: "5H", cooldownSeconds: 42 });
     expect(svg).toContain("WAIT 42s");
@@ -76,9 +97,10 @@ describe("renderQuotaMeter", () => {
 });
 
 describe("renderLoginRequired", () => {
-  it("renders the sign-in tile for both windows (snapshots)", () => {
+  it("renders the sign-in tile for every window (snapshots)", () => {
     expect(renderLoginRequired({ window: "5h", label: "5H" })).toMatchSnapshot("5h");
     expect(renderLoginRequired({ window: "7d", label: "7D" })).toMatchSnapshot("7d");
+    expect(renderLoginRequired({ window: "fable", label: "FABLE" })).toMatchSnapshot("fable");
   });
 
   it("shows LOG IN and the re-auth hint, never a WAIT badge", () => {
