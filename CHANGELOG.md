@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+### Fixed
+- **Switch Account cycle mode now rotates through every account, not just two.** The account list was ordered most-recently-used first, and swapping stamped that timestamp — so "next" always resolved to the account you had just left. With three or more accounts the key bounced between the same two and the rest were never reachable. Cycling now follows a fixed order (the order accounts were added), so *N* presses visit *N* accounts and wrap. The unreachable accounts were never lost: they stayed in the registry with their credentials intact, just invisible to the key.
+- **Accounts are no longer removed when their owner can't be confirmed.** The startup check that cleans up cross-wired credentials treated an unreachable `/profile` lookup — offline, a `5xx`, a rate limit — as proof of corruption, and dropped every account sharing a token. An unreachable endpoint says nothing about the account, so removal now requires a positive identification of a *different* owner; unconfirmed duplicates are logged, left alone, and re-checked on the next start.
+- **An interrupted write can no longer blank the account registry.** `accounts.json` is now written to a temporary file and renamed into place, so a crash mid-write leaves the previous registry intact instead of a truncated file that reads back as "no accounts at all".
+
+### Changed
+- **Accounts are listed oldest-first everywhere.** The Switch Account cycle and the Property Inspector dropdowns share one stable order, so the dropdown no longer reshuffles after each swap and its order tells you what the next press will do.
+- **Per-account colors expanded from 6 to 20** so larger account sets stay distinguishable. Existing accounts keep the colors they already have. There is still no limit on how many accounts you can add — past 20 the colors repeat.
+
 ## [0.1.0] - 2026-07-22
 
 ### Added

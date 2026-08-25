@@ -13,9 +13,12 @@ import {
   type ClaudeCredentials,
 } from "./keychain.js";
 import {
+  colorForIndex,
   decideCredsSource,
   detectCorruptedStashes,
   sameEmail,
+  SOFT_ACCOUNT_LIMIT,
+  stableOrder,
   type CredsSource,
   type StashEntry,
 } from "./accountsPolicy.js";
@@ -27,8 +30,6 @@ import {
 import { notify } from "./terminal.js";
 
 export const PLUGIN_KEYCHAIN_PREFIX = "siestadeck-token";
-
-const PALETTE = ["#D0776C", "#F2C744", "#E5534B", "#E0A458", "#E5A38A", "#B5483A"];
 
 export type Account = {
   slug: string;
@@ -60,9 +61,20 @@ async function readRegistry(): Promise<Registry> {
   }
 }
 
+let writeSeq = 0;
+
+/**
+ * Write the registry through a temp file and rename it into place. `rename(2)`
+ * is atomic, so an interrupted write can never leave a truncated accounts.json
+ * behind — which `readRegistry` above would swallow and report as "no accounts
+ * at all". The temp name is unique per write so two overlapping writes can't
+ * interleave into one file.
+ */
 async function writeRegistry(reg: Registry): Promise<void> {
   await fs.mkdir(REGISTRY_DIR, { recursive: true });
-  await fs.writeFile(REGISTRY_PATH, JSON.stringify(reg, null, 2));
+  const tmp = `${REGISTRY_PATH}.${process.pid}.${++writeSeq}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(reg, null, 2));
+  await fs.rename(tmp, REGISTRY_PATH);
 }
 
 function keychainServiceFor(slug: string): string {
@@ -99,7 +111,7 @@ export class AccountsService extends EventEmitter {
   private async reconcilePaletteColors(): Promise<void> {
     let changed = false;
     this.registry.accounts.forEach((acc, idx) => {
-      const target = PALETTE[idx % PALETTE.length]!;
+      const target = colorForIndex(idx);
       if (acc.color !== target) {
         acc.color = target;
         changed = true;
@@ -108,10 +120,13 @@ export class AccountsService extends EventEmitter {
     if (changed) await writeRegistry(this.registry);
   }
 
+  /**
+   * Every account, oldest first. The order is stable across swaps by design —
+   * see `stableOrder`; the round-robin in the Switch Account key and the PI
+   * dropdown both walk this sequence, so it must not depend on recency.
+   */
   list(): Account[] {
-    return [...this.registry.accounts].sort((a, b) =>
-      a.lastUsedAt < b.lastUsedAt ? 1 : a.lastUsedAt > b.lastUsedAt ? -1 : 0,
-    );
+    return stableOrder(this.registry.accounts);
   }
 
   get activeSlug(): string | null {
@@ -335,15 +350,30 @@ export class AccountsService extends EventEmitter {
       email,
       tier: creds.claudeAiOauth.subscriptionType,
       rateLimitTier: creds.claudeAiOauth.rateLimitTier,
-      color: PALETTE[this.registry.accounts.length % PALETTE.length]!,
+      color: colorForIndex(this.registry.accounts.length),
       addedAt: new Date().toISOString(),
       lastUsedAt: new Date().toISOString(),
     };
     this.registry.accounts.push(acct);
+    this.warnIfCrowded();
     if (setActive) this.registry.activeSlug = slug;
     await this.stashCreds(slug, creds);
     await writeRegistry(this.registry);
     return this.registry.activeSlug;
+  }
+
+  /**
+   * The registry has no hard limit; this only surfaces an implausibly large one
+   * in the logs, where it usually means accounts are being created that the user
+   * did not intend. Nothing is refused or removed.
+   */
+  private warnIfCrowded(): void {
+    const n = this.registry.accounts.length;
+    if (n > SOFT_ACCOUNT_LIMIT) {
+      streamDeck.logger.warn(
+        `accounts: ${n} accounts in the registry (past the ${SOFT_ACCOUNT_LIMIT} soft limit) — colors now repeat`,
+      );
+    }
   }
 
   /**
@@ -354,6 +384,11 @@ export class AccountsService extends EventEmitter {
    * a corrupt stash can never be made correct in place, so the cleanest remedy
    * is to log the account out of Siesta and let the user re-add it via Login,
    * which captures fresh, correct credentials.
+   *
+   * Removal requires *proof*: a group whose owner `/profile` couldn't identify
+   * is left completely alone and re-checked on the next start. Deleting on an
+   * unresolved lookup meant every offline start wiped both halves of a duplicate
+   * pair — accounts vanishing was the bug, not the cleanup.
    *
    * Clears `activeSlug` if it pointed at a removed account; the subsequent
    * passive adopt then re-selects whatever Claude Code is actually logged in to.
@@ -374,7 +409,12 @@ export class AccountsService extends EventEmitter {
     for (const [token, n] of counts) {
       if (n >= 2) resolved[token] = await this.resolveEmail(token);
     }
-    const { flag } = detectCorruptedStashes(entries, resolved);
+    const { flag, unresolved } = detectCorruptedStashes(entries, resolved);
+    if (unresolved.length > 0) {
+      streamDeck.logger.warn(
+        `accounts: duplicate stashes whose owner could not be confirmed (offline?) — left untouched, will re-check: ${unresolved.join(", ")}`,
+      );
+    }
     if (flag.length === 0) return;
     const drop = new Set(flag);
     this.registry.accounts = this.registry.accounts.filter((a) => !drop.has(a.slug));
@@ -517,13 +557,14 @@ export class AccountsService extends EventEmitter {
       email,
       tier: creds.claudeAiOauth.subscriptionType,
       rateLimitTier: creds.claudeAiOauth.rateLimitTier,
-      color: PALETTE[this.registry.accounts.length % PALETTE.length]!,
+      color: colorForIndex(this.registry.accounts.length),
       addedAt: new Date().toISOString(),
       lastUsedAt: new Date().toISOString(),
     };
     await this.stashCreds(slug, creds);
     this.emailMemo.clear();
     this.registry.accounts.push(acct);
+    this.warnIfCrowded();
     this.registry.activeSlug = slug;
     await writeRegistry(this.registry);
     this.emit("changed");

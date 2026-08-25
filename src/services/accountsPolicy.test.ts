@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ACCOUNT_PALETTE,
+  colorForIndex,
   decideCredsSource,
   detectCorruptedStashes,
+  pickNextSlug,
   sameEmail,
+  SOFT_ACCOUNT_LIMIT,
+  stableOrder,
+  type Orderable,
   type StashEntry,
 } from "./accountsPolicy.js";
 
@@ -90,6 +96,7 @@ describe("detectCorruptedStashes", () => {
     const verdict = detectCorruptedStashes(entries, {});
     expect(verdict.flag).toEqual([]);
     expect(verdict.keep).toEqual(["a", "b"]);
+    expect(verdict.unresolved).toEqual([]);
   });
 
   it("keeps the true owner of a shared token and flags the rest", () => {
@@ -100,15 +107,20 @@ describe("detectCorruptedStashes", () => {
     const verdict = detectCorruptedStashes(entries, { shared: "b@x.com" });
     expect(verdict.keep).toEqual(["b"]);
     expect(verdict.flag).toEqual(["a"]);
+    expect(verdict.unresolved).toEqual([]);
   });
 
-  it("flags the whole group when the token owner can't be resolved", () => {
+  it("never flags a group whose owner can't be resolved — offline is not corruption", () => {
     const entries: StashEntry[] = [
       { slug: "a", token: "shared", email: "a@x.com" },
       { slug: "b", token: "shared", email: "b@x.com" },
     ];
-    expect(detectCorruptedStashes(entries, {}).flag).toEqual(["a", "b"]);
-    expect(detectCorruptedStashes(entries, { shared: null }).flag).toEqual(["a", "b"]);
+    for (const resolved of [{}, { shared: null }]) {
+      const verdict = detectCorruptedStashes(entries, resolved);
+      expect(verdict.flag).toEqual([]);
+      expect(verdict.keep).toEqual([]);
+      expect(verdict.unresolved).toEqual(["a", "b"]);
+    }
   });
 
   it("flags the whole group when no member claims the resolved owner email", () => {
@@ -119,6 +131,7 @@ describe("detectCorruptedStashes", () => {
     const verdict = detectCorruptedStashes(entries, { shared: "c@x.com" });
     expect(verdict.flag).toEqual(["a", "b"]);
     expect(verdict.keep).toEqual([]);
+    expect(verdict.unresolved).toEqual([]);
   });
 
   it("treats accounts with no stash as fine (never corrupt)", () => {
@@ -129,6 +142,7 @@ describe("detectCorruptedStashes", () => {
     const verdict = detectCorruptedStashes(entries, {});
     expect(verdict.flag).toEqual([]);
     expect(verdict.keep).toEqual(["a", "b"]);
+    expect(verdict.unresolved).toEqual([]);
   });
 
   it("matches the owner case-insensitively", () => {
@@ -139,5 +153,135 @@ describe("detectCorruptedStashes", () => {
     const verdict = detectCorruptedStashes(entries, { shared: "owner@x.com" });
     expect(verdict.keep).toEqual(["a"]);
     expect(verdict.flag).toEqual(["b"]);
+  });
+
+  it("resolves a three-way group without collateral damage", () => {
+    const entries: StashEntry[] = [
+      { slug: "a", token: "shared", email: "a@x.com" },
+      { slug: "b", token: "shared", email: "b@x.com" },
+      { slug: "c", token: "shared", email: "c@x.com" },
+      { slug: "d", token: "own", email: "d@x.com" },
+    ];
+    const verdict = detectCorruptedStashes(entries, { shared: "c@x.com" });
+    expect(verdict.keep).toEqual(["c", "d"]);
+    expect(verdict.flag).toEqual(["a", "b"]);
+    expect(verdict.unresolved).toEqual([]);
+  });
+});
+
+const acct = (slug: string, addedAt: string): Orderable => ({ slug, addedAt });
+
+describe("stableOrder", () => {
+  it("sorts oldest first by addedAt", () => {
+    const out = stableOrder([
+      acct("c", "2026-03-01T00:00:00Z"),
+      acct("a", "2026-01-01T00:00:00Z"),
+      acct("b", "2026-02-01T00:00:00Z"),
+    ]);
+    expect(out.map((a) => a.slug)).toEqual(["a", "b", "c"]);
+  });
+
+  it("breaks addedAt ties by slug so the order is total", () => {
+    const same = "2026-01-01T00:00:00Z";
+    const out = stableOrder([acct("zeta", same), acct("alpha", same), acct("mid", same)]);
+    expect(out.map((a) => a.slug)).toEqual(["alpha", "mid", "zeta"]);
+  });
+
+  it("does not mutate its input", () => {
+    const input = [acct("b", "2026-02-01T00:00:00Z"), acct("a", "2026-01-01T00:00:00Z")];
+    stableOrder(input);
+    expect(input.map((a) => a.slug)).toEqual(["b", "a"]);
+  });
+
+  it("tolerates an empty registry", () => {
+    expect(stableOrder([])).toEqual([]);
+  });
+
+  it("keeps a total order when a hand-edited row has no addedAt", () => {
+    const rows = [
+      acct("dated", "2026-01-01T00:00:00Z"),
+      { slug: "undated" } as Orderable, // registry rows are JSON.parse'd, not validated
+    ];
+    expect(stableOrder(rows).map((a) => a.slug)).toEqual(["undated", "dated"]);
+    expect(pickNextSlug(rows, "undated")).toBe("dated");
+    expect(pickNextSlug(rows, "dated")).toBe("undated");
+  });
+});
+
+describe("pickNextSlug", () => {
+  const three = [
+    acct("b", "2026-02-01T00:00:00Z"),
+    acct("c", "2026-03-01T00:00:00Z"),
+    acct("a", "2026-01-01T00:00:00Z"),
+  ]; // deliberately shuffled: the picker must impose its own order
+
+  it("cycles through every account and wraps — the three-account bug", () => {
+    expect(pickNextSlug(three, "a")).toBe("b");
+    expect(pickNextSlug(three, "b")).toBe("c");
+    expect(pickNextSlug(three, "c")).toBe("a");
+  });
+
+  it("visits all 20 accounts of a soft-limit-sized registry in one lap", () => {
+    const many = Array.from({ length: SOFT_ACCOUNT_LIMIT }, (_, i) =>
+      acct(`acct-${i}`, `2026-01-${String(i + 1).padStart(2, "0")}T00:00:00Z`),
+    );
+    const seen = new Set<string>();
+    let cur: string | null = "acct-0";
+    for (let i = 0; i < SOFT_ACCOUNT_LIMIT; i++) {
+      seen.add(cur!);
+      cur = pickNextSlug(many, cur);
+    }
+    expect(seen.size).toBe(SOFT_ACCOUNT_LIMIT);
+    expect(cur).toBe("acct-0"); // wrapped exactly once
+  });
+
+  it("has no ceiling — cycles a registry well past the soft limit", () => {
+    const many = Array.from({ length: 57 }, (_, i) =>
+      acct(`a${String(i).padStart(3, "0")}`, `2026-01-01T00:00:${String(i).padStart(2, "0")}Z`),
+    );
+    expect(pickNextSlug(many, "a020")).toBe("a021");
+    expect(pickNextSlug(many, "a056")).toBe("a000");
+  });
+
+  it("returns null when the press would be a no-op", () => {
+    expect(pickNextSlug([], null)).toBeNull();
+    expect(pickNextSlug([], "a")).toBeNull();
+    expect(pickNextSlug([acct("a", "2026-01-01T00:00:00Z")], "a")).toBeNull();
+  });
+
+  it("recovers a lost or dangling selection by picking the first account", () => {
+    expect(pickNextSlug(three, null)).toBe("a");
+    expect(pickNextSlug(three, "deleted-slug")).toBe("a");
+    expect(pickNextSlug([acct("solo", "2026-01-01T00:00:00Z")], null)).toBe("solo");
+  });
+
+  it("still visits everyone when addedAt timestamps collide", () => {
+    const same = "2026-01-01T00:00:00Z";
+    const tied = [acct("b", same), acct("a", same), acct("c", same)];
+    expect(pickNextSlug(tied, "a")).toBe("b");
+    expect(pickNextSlug(tied, "b")).toBe("c");
+    expect(pickNextSlug(tied, "c")).toBe("a");
+  });
+});
+
+describe("account palette", () => {
+  it("covers the soft limit", () => {
+    expect(ACCOUNT_PALETTE).toHaveLength(SOFT_ACCOUNT_LIMIT);
+  });
+
+  it("pins the original six colors in place so existing accounts never repaint", () => {
+    expect(ACCOUNT_PALETTE.slice(0, 6)).toEqual([
+      "#D0776C", "#F2C744", "#E5534B", "#E0A458", "#E5A38A", "#B5483A",
+    ]);
+  });
+
+  it("has no duplicate colors", () => {
+    expect(new Set(ACCOUNT_PALETTE).size).toBe(ACCOUNT_PALETTE.length);
+  });
+
+  it("wraps past the end instead of running out", () => {
+    expect(colorForIndex(0)).toBe(ACCOUNT_PALETTE[0]);
+    expect(colorForIndex(SOFT_ACCOUNT_LIMIT)).toBe(ACCOUNT_PALETTE[0]);
+    expect(colorForIndex(SOFT_ACCOUNT_LIMIT + 3)).toBe(ACCOUNT_PALETTE[3]);
   });
 });

@@ -61,6 +61,11 @@ export type CorruptionVerdict = {
   flag: string[];
   /** Slugs whose stash is fine (unique, empty, or the true owner of a shared token). */
   keep: string[];
+  /**
+   * Slugs sharing a token whose owner we could not resolve. Undecidable, not
+   * innocent — the caller must leave them untouched and re-evaluate later.
+   */
+  unresolved: string[];
 };
 
 /**
@@ -70,11 +75,14 @@ export type CorruptionVerdict = {
  * never share tokens; the registry de-dupes by email so the same account never
  * appears twice).
  *
- * For each duplicate group we keep the account whose recorded email matches the
+ * For each duplicate group we keep the accounts whose recorded email matches the
  * token's true owner (resolved out-of-band via `/profile`, passed in
- * `resolvedOwnerByToken`) and flag the rest. If the token's owner can't be
- * resolved (expired/offline), the whole group is flagged — we can't safely
- * attribute it.
+ * `resolvedOwnerByToken`) and flag the rest.
+ *
+ * When the owner can't be resolved the group is reported as `unresolved`, never
+ * flagged: an unreachable `/profile` (offline, 5xx, rate-limited) is a statement
+ * about the network, not about the account. Flagging on a transient failure used
+ * to delete both members of every duplicate group on any offline start.
  *
  * Pure and deterministic given the input order.
  */
@@ -84,6 +92,7 @@ export function detectCorruptedStashes(
 ): CorruptionVerdict {
   const flag: string[] = [];
   const keep: string[] = [];
+  const unresolved: string[] = [];
 
   const byToken = new Map<string, StashEntry[]>();
   for (const e of entries) {
@@ -103,19 +112,83 @@ export function detectCorruptedStashes(
     }
     const trueEmail = resolvedOwnerByToken[token] ?? null;
     if (!trueEmail) {
-      for (const g of group) flag.push(g.slug);
+      for (const g of group) unresolved.push(g.slug);
       continue;
     }
-    let kept = false;
     for (const g of group) {
-      if (!kept && sameEmail(g.email, trueEmail)) {
-        keep.push(g.slug);
-        kept = true;
-      } else {
-        flag.push(g.slug);
-      }
+      if (sameEmail(g.email, trueEmail)) keep.push(g.slug);
+      else flag.push(g.slug);
     }
   }
 
-  return { flag, keep };
+  return { flag, keep, unresolved };
+}
+
+/**
+ * A soft ceiling, never enforced. The registry holds as many accounts as you
+ * add; this only sizes the color palette and triggers a log line so an absurd
+ * registry is visible in the diagnostics. Nothing is ever refused or removed
+ * for exceeding it.
+ */
+export const SOFT_ACCOUNT_LIMIT = 20;
+
+/**
+ * Per-account accent colors, assigned by registry position.
+ *
+ * The first six entries are load-bearing: colors are reassigned by index on
+ * every start, so changing a value or a position here would silently repaint
+ * every existing user's accounts. Append, never reorder. Warm tones first
+ * (the brand palette), then cooler hues so neighbours stay distinguishable at
+ * Stream Deck key size.
+ */
+export const ACCOUNT_PALETTE: readonly string[] = [
+  "#D0776C", "#F2C744", "#E5534B", "#E0A458", "#E5A38A", "#B5483A",
+  "#5B8DB8", "#6FA86B", "#8E6FB8", "#4FA3A5", "#C46FA0", "#A0A84F",
+  "#B87F5B", "#5B6FB8", "#6BA88E", "#B85B8D", "#8FA05F", "#5FA0B8",
+  "#B8A05B", "#7C8A99",
+];
+
+/** Accent color for the account at registry position `idx`. Wraps past the end. */
+export function colorForIndex(idx: number): string {
+  return ACCOUNT_PALETTE[idx % ACCOUNT_PALETTE.length]!;
+}
+
+/** The fields ordering needs; `Account` in accounts.ts satisfies it. */
+export type Orderable = { slug: string; addedAt: string };
+
+/**
+ * Presentation and cycle order: oldest account first, by `addedAt` (ISO-8601
+ * strings sort chronologically), tie-broken by slug.
+ *
+ * Deliberately NOT `lastUsedAt`: a recency sort reshuffles on every swap, which
+ * makes "the next account" mean "the one I just came from" and traps the cycle
+ * in a two-account loop. Order must be a property of the registry, not of the
+ * last press. Does not mutate the input.
+ */
+export function stableOrder<T extends Orderable>(accounts: readonly T[]): T[] {
+  const addedAt = (a: T): string => a.addedAt ?? ""; // registry rows come from JSON.parse
+  return [...accounts].sort((a, b) => {
+    if (addedAt(a) !== addedAt(b)) return addedAt(a) < addedAt(b) ? -1 : 1;
+    return a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0;
+  });
+}
+
+/**
+ * The account a "next" press should swap to: the successor of `activeSlug` in
+ * stable order, wrapping at the end. Works for any number of accounts.
+ *
+ * Returns null when the press would be a no-op — an empty registry, or a single
+ * account that is already active — so the caller can flash the tile. An
+ * `activeSlug` that is null or dangling resolves to the first account, which
+ * recovers a registry whose selection was lost.
+ */
+export function pickNextSlug(
+  accounts: readonly Orderable[],
+  activeSlug: string | null,
+): string | null {
+  const ordered = stableOrder(accounts);
+  if (ordered.length === 0) return null;
+  const idx = ordered.findIndex((a) => a.slug === activeSlug);
+  const next = idx === -1 ? ordered[0]! : ordered[(idx + 1) % ordered.length]!;
+  return next.slug === activeSlug ? null : next.slug;
 }
