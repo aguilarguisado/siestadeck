@@ -89,6 +89,8 @@ siestadeck is designed for **one person** who has more than one Claude account t
 
 Use a **Switch Account** key in cycle mode to rotate through your accounts, or set a key's target to a specific account for a direct jump. The swap is instant — no browser, no logout.
 
+There's no limit on how many accounts you can keep. Cycle mode is a round-robin in the order you added them, so with three accounts a key press goes first → second → third → first, and the Property Inspector dropdown lists them in that same order.
+
 > **Please don't use this to share a Claude account with other people.** The Claude Max plan is for individual use; sharing credentials across teammates violates Anthropic's terms. siestadeck is a personal multi-account convenience tool, not a team-sharing workaround.
 
 ## Privacy & data flow

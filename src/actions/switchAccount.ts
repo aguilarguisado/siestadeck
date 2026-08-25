@@ -11,6 +11,7 @@ import {
 
 import { toImageUri } from "../render/rasterize.js";
 import { accountsService } from "../services/accounts.js";
+import { pickNextSlug } from "../services/accountsPolicy.js";
 import { handleAccountDatasource } from "../services/piDatasources.js";
 import { drawSwitchAccount } from "./draw/switchAccount.js";
 
@@ -57,14 +58,10 @@ export class SwitchAccount extends SingletonAction<Settings> {
     if (mode === "specific" && ev.payload.settings.targetSlug) {
       target = ev.payload.settings.targetSlug;
     } else {
-      if (accts.length < 2) {
-        // Only one saved account — cycle is a no-op. Flash the tile so the
-        // user gets feedback instead of a silent press.
-        await ev.action.showAlert();
-        return;
-      }
-      const activeIdx = accts.findIndex((a) => a.slug === accountsService.activeSlug);
-      target = accts[(activeIdx + 1) % accts.length]?.slug;
+      // Round-robin over every saved account, however many there are. Null means
+      // the press is a no-op (one account, already active); the guard below turns
+      // that into a tile flash instead of a silent press.
+      target = pickNextSlug(accts, accountsService.activeSlug) ?? undefined;
     }
     if (!target || target === accountsService.activeSlug) {
       await ev.action.showAlert();
