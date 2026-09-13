@@ -5,7 +5,9 @@ import {
   colorForIndex,
   decideCredsSource,
   detectCorruptedStashes,
+  liveOutranksStash,
   pickNextSlug,
+  preferLiveOverStash,
   sameEmail,
   SOFT_ACCOUNT_LIMIT,
   stableOrder,
@@ -84,6 +86,67 @@ describe("decideCredsSource", () => {
         accountEmail: "a@b.com",
       }),
     ).toBe("live");
+  });
+});
+
+describe("liveOutranksStash", () => {
+  const base = { liveToken: "live", liveExpiresAt: 2000, stashToken: "stash", stashExpiresAt: 1000 };
+
+  it("prefers a live entry that outlives the stash", () => {
+    expect(liveOutranksStash(base)).toBe(true);
+  });
+
+  it("declines when there are no live creds", () => {
+    expect(liveOutranksStash({ ...base, liveToken: null })).toBe(false);
+  });
+
+  it("declines when both hold the same token", () => {
+    expect(liveOutranksStash({ ...base, stashToken: "live" })).toBe(false);
+  });
+
+  it("declines when the stash is the fresher of the two", () => {
+    expect(liveOutranksStash({ ...base, liveExpiresAt: 500 })).toBe(false);
+  });
+
+  it("declines on a tie, leaving the swap semantics untouched", () => {
+    expect(liveOutranksStash({ ...base, liveExpiresAt: 1000 })).toBe(false);
+  });
+
+  it("prefers live when the account has no stash at all", () => {
+    expect(liveOutranksStash({ ...base, stashToken: null, stashExpiresAt: null })).toBe(true);
+  });
+});
+
+describe("preferLiveOverStash", () => {
+  const fresh = { liveToken: "live", liveExpiresAt: 2000, stashToken: "stash", stashExpiresAt: 1000 };
+
+  it("keeps a fresher live entry confirmed to belong to the swap target", () => {
+    expect(
+      preferLiveOverStash({ ...fresh, confirmedLiveEmail: "ADA@example.com", accountEmail: "ada@example.com" }),
+    ).toBe(true);
+  });
+
+  it("never keeps another account's credential, however fresh", () => {
+    expect(
+      preferLiveOverStash({ ...fresh, confirmedLiveEmail: "other@example.com", accountEmail: "ada@example.com" }),
+    ).toBe(false);
+  });
+
+  it("never keeps an unconfirmable live entry — identity is proved, not assumed", () => {
+    expect(
+      preferLiveOverStash({ ...fresh, confirmedLiveEmail: null, accountEmail: "ada@example.com" }),
+    ).toBe(false);
+  });
+
+  it("swaps the stash in when it is not the staler credential", () => {
+    expect(
+      preferLiveOverStash({
+        ...fresh,
+        liveExpiresAt: 100,
+        confirmedLiveEmail: "ada@example.com",
+        accountEmail: "ada@example.com",
+      }),
+    ).toBe(false);
   });
 });
 

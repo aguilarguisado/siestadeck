@@ -16,6 +16,8 @@ import {
   colorForIndex,
   decideCredsSource,
   detectCorruptedStashes,
+  liveOutranksStash,
+  preferLiveOverStash,
   sameEmail,
   SOFT_ACCOUNT_LIMIT,
   stableOrder,
@@ -525,8 +527,15 @@ export class AccountsService extends EventEmitter {
   async swap(slug: string): Promise<void> {
     const acct = this.get(slug);
     if (!acct) throw new Error(`Unknown account: ${slug}`);
-    const raw = await readGenericPassword(keychainServiceFor(slug));
-    await writeClaudeCredentials(os.userInfo().username, raw);
+    const live = await this.liveCredsIfBetterThanStash(acct);
+    if (live) {
+      // The live entry already *is* this account, and newer — adopt it instead
+      // of swapping a retired credential in over the top of it.
+      await this.stashCreds(slug, live);
+    } else {
+      const raw = await readGenericPassword(keychainServiceFor(slug));
+      await writeClaudeCredentials(os.userInfo().username, raw);
+    }
     this.emailMemo.clear();
     this.registry.activeSlug = slug;
     acct.lastUsedAt = new Date().toISOString();
@@ -534,6 +543,39 @@ export class AccountsService extends EventEmitter {
     this.emit("changed");
     this.emit("swapped", slug);
     notify("siestadeck", `Switched to ${acct.displayName} — restart Claude Code to apply`);
+  }
+
+  /**
+   * The live `Claude Code-credentials` entry when swapping `acct`'s stash in
+   * would be a downgrade — see `preferLiveOverStash` for why a merely-older
+   * stash is in fact a *retired* one. Returns null whenever the stash is the
+   * right thing to write, which is the normal case for every account that isn't
+   * the one Claude Code is currently signed in to.
+   *
+   * A `/profile` lookup is only spent when the live entry could plausibly win
+   * (different token, later expiry), and it's memoized per token.
+   */
+  private async liveCredsIfBetterThanStash(acct: Account): Promise<ClaudeCredentials | null> {
+    let live: ClaudeCredentials | null;
+    try {
+      live = await readClaudeCredentials();
+    } catch {
+      return null;
+    }
+    const stash = await this.readStash(acct.slug);
+    const liveToken = live.claudeAiOauth.accessToken;
+    const freshness = {
+      liveToken,
+      liveExpiresAt: live.claudeAiOauth.expiresAt ?? null,
+      stashToken: stash?.claudeAiOauth.accessToken ?? null,
+      stashExpiresAt: stash?.claudeAiOauth.expiresAt ?? null,
+    };
+    // Freshness disqualifies the live entry for free; only then pay for identity.
+    if (!liveOutranksStash(freshness)) return null;
+    const confirmedLiveEmail = await this.resolveEmail(liveToken);
+    return preferLiveOverStash({ ...freshness, confirmedLiveEmail, accountEmail: acct.email })
+      ? live
+      : null;
   }
 
   /**
