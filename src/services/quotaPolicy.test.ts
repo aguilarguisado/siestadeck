@@ -12,6 +12,7 @@ import {
   MIN_AUTO_POLL_MS,
   MIN_BACKOFF_MS,
   MIN_REFRESH_GAP_MS,
+  shouldClearAuthBackoff,
   type UsageLimit,
 } from "./quotaPolicy.js";
 
@@ -228,6 +229,44 @@ describe("clampAutoInterval", () => {
   it("passes through values at or above the floor", () => {
     expect(clampAutoInterval(MIN_AUTO_POLL_MS)).toBe(MIN_AUTO_POLL_MS);
     expect(clampAutoInterval(15 * 60_000)).toBe(15 * 60_000);
+  });
+});
+
+describe("shouldClearAuthBackoff", () => {
+  it("clears once a different token is on file — the user signed in again", () => {
+    expect(
+      shouldClearAuthBackoff({ backoffReason: "auth", backoffToken: "dead", currentToken: "fresh" }),
+    ).toBe(true);
+  });
+
+  it("holds while the failing token is still the one on file", () => {
+    expect(
+      shouldClearAuthBackoff({ backoffReason: "auth", backoffToken: "dead", currentToken: "dead" }),
+    ).toBe(false);
+  });
+
+  it("holds when no credential can be read at all", () => {
+    expect(
+      shouldClearAuthBackoff({ backoffReason: "auth", backoffToken: "dead", currentToken: null }),
+    ).toBe(false);
+  });
+
+  it("never shortens a 429 — re-authenticating does not earn quota back", () => {
+    expect(
+      shouldClearAuthBackoff({ backoffReason: "rate", backoffToken: undefined, currentToken: "fresh" }),
+    ).toBe(false);
+  });
+
+  it("does nothing when there is no backoff in force", () => {
+    expect(
+      shouldClearAuthBackoff({ backoffReason: undefined, backoffToken: undefined, currentToken: "fresh" }),
+    ).toBe(false);
+  });
+
+  it("retries when the failing token was never recorded", () => {
+    expect(
+      shouldClearAuthBackoff({ backoffReason: "auth", backoffToken: undefined, currentToken: "fresh" }),
+    ).toBe(true);
   });
 });
 

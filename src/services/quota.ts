@@ -12,6 +12,7 @@ import {
   computeBackoffMs,
   decideRefresh,
   IDLE_THRESHOLD_MS,
+  shouldClearAuthBackoff,
   UNAUTHORIZED_BACKOFF_MS,
   type BackoffReason,
   type QuotaSnapshot,
@@ -44,6 +45,12 @@ type AccountState = {
   lastAttemptAt: number;
   backoffUntil: number;
   backoffReason?: BackoffReason;
+  /**
+   * The access token an "auth" backoff was recorded against, so a later refresh
+   * can tell "the login is still lost" from "a new credential has landed since".
+   * Unset for every other backoff reason and cleared on every success.
+   */
+  authFailedToken?: string;
   autoTimer?: NodeJS.Timeout;
   /**
    * Configured auto-refresh cadence in ms (already clamped to MIN_AUTO_POLL_MS).
@@ -87,6 +94,7 @@ export class QuotaRegistry extends EventEmitter {
         if (s.backoffReason === "auth") {
           s.backoffUntil = 0;
           s.backoffReason = undefined;
+          s.authFailedToken = undefined;
           s.lastAttemptAt = 0;
           recovered = true;
         }
@@ -143,19 +151,25 @@ export class QuotaRegistry extends EventEmitter {
       inFlight: state.inFlight,
     });
     if (decision === "in-flight") return state.latest;
+    // Set when a stale auth backoff was dropped below; carried into the fetch so
+    // the credential isn't resolved twice.
+    let token: string | undefined;
     if (decision === "backoff") {
-      this.publishError(
-        state,
-        backoffLabel(state.backoffReason, state.backoffUntil - now),
-        state.backoffUntil,
-      );
-      return state.latest;
+      token = (await this.tokenIfAuthBackoffIsStale(state)) ?? undefined;
+      if (token == null) {
+        this.publishError(
+          state,
+          backoffLabel(state.backoffReason, state.backoffUntil - now),
+          state.backoffUntil,
+        );
+        return state.latest;
+      }
     }
     if (decision === "coalesce") return state.latest;
     state.inFlight = true;
     state.lastAttemptAt = now;
     try {
-      const token = await state.tokenSource();
+      token ??= await state.tokenSource();
       const result = await fetchUsage(token);
       if ("status" in result) {
         if (result.status === 429) {
@@ -168,10 +182,11 @@ export class QuotaRegistry extends EventEmitter {
           // refresh_token; if that works, retry the usage fetch with the
           // fresh access token. If anything fails, cool down for 30 min so
           // repeated auto-polls don't trip Anthropic's WAF.
-          const recovered = await this.tryRefreshAndRetry(state);
+          const { recovered, lastToken } = await this.tryRefreshAndRetry(state, token);
           if (!recovered) {
             state.backoffUntil = now + UNAUTHORIZED_BACKOFF_MS;
             state.backoffReason = "auth";
+            state.authFailedToken = lastToken;
             this.publishError(
               state,
               `auth expired (${result.status})`,
@@ -184,6 +199,7 @@ export class QuotaRegistry extends EventEmitter {
       } else {
         state.backoffUntil = 0;
         state.backoffReason = undefined;
+        state.authFailedToken = undefined;
         const snap = buildSnapshot(state.slug, result);
         state.latest = snap;
         this.publish(state, snap);
@@ -197,32 +213,79 @@ export class QuotaRegistry extends EventEmitter {
   }
 
   /**
+   * The account's current token, but only when an in-force auth backoff no
+   * longer describes it — the credential on file has changed since the failure.
+   * Clears the backoff as a side effect and hands the token back so the caller
+   * can fetch with it; returns null to leave the backoff standing.
+   *
+   * Resolving the token is a local credential-store read (plus, at most, one
+   * memoized `/profile` identity check), never a usage request — so this cannot
+   * dig the rate-limit hole deeper. The alternative is telling the user to sign
+   * in again when they already have.
+   */
+  private async tokenIfAuthBackoffIsStale(state: AccountState): Promise<string | null> {
+    if (state.backoffReason !== "auth") return null; // a 429 must run its course
+    let current: string | null;
+    try {
+      current = await state.tokenSource();
+    } catch {
+      return null; // no credential at all — the login really is gone
+    }
+    const stale = shouldClearAuthBackoff({
+      backoffReason: state.backoffReason,
+      backoffToken: state.authFailedToken,
+      currentToken: current,
+    });
+    if (!stale) return null;
+    state.backoffUntil = 0;
+    state.backoffReason = undefined;
+    state.authFailedToken = undefined;
+    streamDeck.logger.info(`quota[${state.slug}]: new credential on file — dropping auth backoff`);
+    return current;
+  }
+
+  /**
    * Attempt to mint a fresh OAuth token for this account via
    * `accountsService.refreshTokenFor` and retry the usage fetch once. On
-   * success, publishes the new snapshot and returns true. On failure
-   * (missing refresh_token, refresh endpoint rejects, retry still errors),
-   * returns false and the caller is expected to back off.
+   * success, publishes the new snapshot and reports `recovered`. On failure
+   * (missing refresh_token, refresh endpoint rejects, retry still errors), the
+   * caller is expected to back off.
+   *
+   * `lastToken` is the token the backoff should be recorded against: the freshly
+   * minted one when a mint happened, `failedToken` otherwise. Reporting the
+   * pre-mint token would make the account look re-credentialled to
+   * `tokenIfAuthBackoffIsStale` on the very next press, which would retry
+   * forever instead of backing off.
    *
    * Runs inside the outer `inFlight=true` block, so concurrent refreshes
    * for the same slug are already serialised.
    */
-  private async tryRefreshAndRetry(state: AccountState): Promise<boolean> {
-    if (state.slug === "__bootstrap__") return false;
+  private async tryRefreshAndRetry(
+    state: AccountState,
+    failedToken: string,
+  ): Promise<{ recovered: boolean; lastToken: string }> {
+    if (state.slug === "__bootstrap__") return { recovered: false, lastToken: failedToken };
     const ok = await accountsService.refreshTokenFor(state.slug);
-    if (!ok) return false;
+    if (!ok) return { recovered: false, lastToken: failedToken };
+    let token: string;
     try {
-      const token = await state.tokenSource();
+      token = await state.tokenSource();
+    } catch {
+      return { recovered: false, lastToken: failedToken };
+    }
+    try {
       const result = await fetchUsage(token);
-      if ("status" in result) return false;
+      if ("status" in result) return { recovered: false, lastToken: token };
       state.backoffUntil = 0;
       state.backoffReason = undefined;
+      state.authFailedToken = undefined;
       const snap = buildSnapshot(state.slug, result);
       state.latest = snap;
       this.publish(state, snap);
       streamDeck.logger.info(`quota[${state.slug}]: refreshed OAuth token`);
-      return true;
+      return { recovered: true, lastToken: token };
     } catch {
-      return false;
+      return { recovered: false, lastToken: token };
     }
   }
 

@@ -144,6 +144,34 @@ export function backoffLabel(reason: BackoffReason | undefined, waitMs: number):
   return reason === "auth" ? `auth expired (wait ${seconds}s)` : `429 (wait ${seconds}s)`;
 }
 
+/**
+ * Whether an in-force backoff should be dropped so the caller can retry now.
+ *
+ * An auth backoff is a verdict on one *credential*: the token that came back
+ * 401 and whose refresh_token Anthropic then refused. It is not a verdict on
+ * the account. The moment a different token is on file — the user signed in
+ * again, Claude Code rotated the live entry, another key adopted fresh creds —
+ * that verdict describes nothing, and sitting on it keeps the tile begging for
+ * a login the user has already done. That loop was the bug: every press
+ * reopened the sign-in flow because the backoff outlived the failure.
+ *
+ * Only ever applies to "auth". A 429 is a verdict on the *caller*, and no
+ * amount of re-authenticating earns the quota back, so that backoff must run
+ * its course. A missing `backoffToken` counts as changed: retrying once is the
+ * safe direction when we can't tell what failed.
+ */
+export function shouldClearAuthBackoff(input: {
+  backoffReason: BackoffReason | undefined;
+  /** The access token the auth backoff was recorded against. */
+  backoffToken: string | undefined;
+  /** The token the account resolves to now; null when none could be read. */
+  currentToken: string | null;
+}): boolean {
+  if (input.backoffReason !== "auth") return false;
+  if (input.currentToken == null) return false;
+  return input.currentToken !== input.backoffToken;
+}
+
 export type RefreshDecision = "fetch" | "coalesce" | "backoff" | "in-flight";
 
 /**

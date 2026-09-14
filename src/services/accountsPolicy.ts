@@ -48,6 +48,57 @@ export function decideCredsSource(input: {
   return "stash";
 }
 
+export type CredsFreshness = {
+  liveToken: string | null;
+  liveExpiresAt: number | null;
+  stashToken: string | null;
+  stashExpiresAt: number | null;
+};
+
+/**
+ * Freshness half of the swap decision: does the live `Claude Code-credentials`
+ * entry outlive this account's stash? Says nothing about *whose* entry it is.
+ *
+ * Split out from `preferLiveOverStash` because identity is the expensive half —
+ * it costs a `/profile` round-trip — and this half disqualifies the live entry
+ * for free in the common case.
+ */
+export function liveOutranksStash(input: CredsFreshness): boolean {
+  const { liveToken, liveExpiresAt, stashToken, stashExpiresAt } = input;
+  if (!liveToken) return false;
+  if (liveToken === stashToken) return false; // same credential — nothing to choose between
+  return (liveExpiresAt ?? 0) > (stashExpiresAt ?? 0);
+}
+
+/**
+ * Whether a swap into this account should KEEP the live
+ * `Claude Code-credentials` entry rather than write the account's stash over it.
+ *
+ * OAuth refresh tokens are single-use. Once Claude Code has refreshed the live
+ * entry, the copy in our per-account stash isn't merely older — it is *retired*,
+ * and Anthropic answers it with HTTP 400. Writing that stash back over a live
+ * entry that already belongs to this account therefore doesn't restore the
+ * account, it revokes it: the usage call 401s, the refresh is refused, and the
+ * tile parks in the 30-minute auth backoff with nothing left to recover from.
+ *
+ * So we keep live only when it outlives the stash AND is *provably* the same
+ * account — a `/profile`-confirmed email; identity is never inferred from
+ * freshness. Everything else swaps the stash in as before: for any other account
+ * the live entry holds someone else's credential, and replacing it is the entire
+ * point of a swap.
+ */
+export function preferLiveOverStash(
+  input: CredsFreshness & {
+    /** Email resolved from the live token via /profile; null/undefined = unconfirmed. */
+    confirmedLiveEmail?: string | null;
+    /** The swap target's recorded email. */
+    accountEmail?: string | null;
+  },
+): boolean {
+  if (!liveOutranksStash(input)) return false;
+  return sameEmail(input.confirmedLiveEmail, input.accountEmail);
+}
+
 export type StashEntry = {
   slug: string;
   /** The account's stashed access token, or null if it has no stash. */

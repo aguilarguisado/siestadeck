@@ -101,16 +101,30 @@ export class QuotaMeter extends SingletonAction<QuotaMeterSettings> {
   }
 
   override onKeyDown(_ev: KeyDownEvent<QuotaMeterSettings>): void {
-    // When the login is lost the account is parked in a 30-min auth backoff, so
-    // a plain refresh is a no-op. Kick off re-login instead — same flow as the
-    // Login/Logout action — then poll for the fresh credentials.
-    const snap = quotaRegistry.snapshotFor(null);
-    if (snap?.cooldownReason === "auth") {
-      openTerminalWithCommand("claude auth login");
-      accountsService.pollForNewLogin();
-      return;
-    }
-    void quotaRegistry.refresh();
+    void this.refreshOrLogin();
+  }
+
+  /**
+   * A press always tries the credentials first, even on a "LOG IN" tile.
+   *
+   * The auth backoff is a verdict on the token that failed, and by the time the
+   * user presses, a working one is often already on file — they just signed in,
+   * or Claude Code rotated the live entry. `refresh()` re-reads the credential
+   * and drops a backoff that has outlived its failure, so the gauge comes
+   * straight back. Only when the refresh *still* reports an auth failure do we
+   * spawn the sign-in flow.
+   *
+   * Reversing this order is what made the tile inescapable: every press reopened
+   * a terminal for a login that had already succeeded, and nothing in that path
+   * ever re-read the keychain, so the tile asked again 30 minutes later.
+   */
+  private async refreshOrLogin(): Promise<void> {
+    const wasLoggedOut = quotaRegistry.snapshotFor(null)?.cooldownReason === "auth";
+    const snap = await quotaRegistry.refresh();
+    if (!wasLoggedOut) return;
+    if (snap?.cooldownReason !== "auth") return; // fresh creds landed — no sign-in needed
+    openTerminalWithCommand("claude auth login");
+    accountsService.pollForNewLogin();
   }
 
   private async draw(visible: Visible, snap: QuotaSnapshot | null): Promise<void> {
