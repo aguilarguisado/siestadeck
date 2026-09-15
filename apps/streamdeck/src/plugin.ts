@@ -87,7 +87,10 @@ function syncRegistryFromDisk(reason: string): void {
     (changed) => {
       if (changed) streamDeck.logger.info(`accounts: registry changed while ${reason}`);
     },
-    (err) => streamDeck.logger.warn(`accounts: reload after ${reason} failed: ${err}`),
+    // Same `while`-clause framing as the success line above: `reason` is an
+    // adjectival phrase ("asleep"), so a frame reading "reload after ${reason}
+    // failed" parses for neither call site.
+    (err) => streamDeck.logger.warn(`accounts: reload failed (${reason}): ${err}`),
   );
 }
 
