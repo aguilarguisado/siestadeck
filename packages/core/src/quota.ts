@@ -1,6 +1,5 @@
 import { EventEmitter } from "node:events";
 
-
 import { readClaudeCredentials } from "./keychain.js";
 import { accountsService } from "./accounts.js";
 import { isClaudeIdle } from "./idle.js";
@@ -324,8 +323,8 @@ export class QuotaRegistry extends EventEmitter {
 
   /**
    * Pause all running auto-refresh timers but remember their configured
-   * intervals. Call when the last Stream Deck device disconnects (no human
-   * is looking at the deck).
+   * intervals. Call when no UI is observing any more — e.g. the last Stream
+   * Deck device disconnects, or a tray window closes.
    */
   suspendAuto(): void {
     for (const state of this.accounts.values()) {
@@ -338,7 +337,8 @@ export class QuotaRegistry extends EventEmitter {
 
   /**
    * Re-arm auto-refresh timers using each account's remembered interval.
-   * Call when a Stream Deck device reconnects.
+   * Call when a UI starts observing again — e.g. a Stream Deck device
+   * reconnects.
    */
   resumeAuto(): void {
     for (const state of this.accounts.values()) this.armAutoTimer(state);

@@ -29,7 +29,7 @@ jobs:
       - name: Tests + coverage
         run: npm run coverage
 
-      - name: Type-check (covers the test files the rollup gate can't see)
+      - name: Type-check (rollup reports type errors as warnings and exits 0)
         run: npm run typecheck
 
       - name: Assert core stays UI-agnostic
@@ -45,6 +45,10 @@ jobs:
 
       - name: Validate manifest
         run: npm run validate
+
+      - name: Release readiness check
+        if: matrix.os == 'macos-latest'
+        run: npm run check:release
 
       - name: Pack plugin
         if: matrix.os == 'macos-latest'

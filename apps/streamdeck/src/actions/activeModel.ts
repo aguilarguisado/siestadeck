@@ -7,15 +7,10 @@ import {
   type WillDisappearEvent,
 } from "@elgato/streamdeck";
 
-import {
-  activeSessionService,
-  readClaudeSettings,
-  updateClaudeSettings,
-  type ActiveSessionSnapshot,
-} from "@siesta/core";
-
 import { toImageUri } from "../render/rasterize.js";
 import { drawActiveModel, shortName } from "./draw/activeModel.js";
+
+import { activeSessionService, updateClaudeSettings, type ActiveSessionSnapshot } from "@siesta/core";
 
 type Settings = Record<string, never>;
 const CYCLE: readonly string[] = ["opus", "haiku", "sonnet"] as const;
@@ -56,14 +51,15 @@ export class ActiveModel extends SingletonAction<Settings> {
   override async onKeyDown(ev: KeyDownEvent<Settings>): Promise<void> {
     if (!ev.action.isKey()) return;
     try {
-      const settings = await readClaudeSettings();
-      const current = typeof settings.model === "string" ? settings.model.toLowerCase() : "";
-      const currentIdx = CYCLE.findIndex((m) => current.includes(m));
-      const nextIdx = currentIdx < 0 ? 0 : (currentIdx + 1) % CYCLE.length;
-      const next = CYCLE[nextIdx]!;
-      // Re-read inside the update so we only ever clobber `model` — settings.json
-      // belongs to Claude Code, and it may have written other keys since.
+      // Derive the step inside the mutator so it reads the same document the
+      // write commits — settings.json belongs to Claude Code, and the mutator
+      // re-reads, so only `model` changes. Seeded rather than `string | null`:
+      // TS narrows a `let` assigned only in a callback to its initializer type.
+      let next: string = CYCLE[0]!;
       await updateClaudeSettings((s) => {
+        const current = typeof s.model === "string" ? s.model.toLowerCase() : "";
+        const currentIdx = CYCLE.findIndex((m) => current.includes(m));
+        next = CYCLE[currentIdx < 0 ? 0 : (currentIdx + 1) % CYCLE.length]!;
         s.model = next;
       });
       this.pinned = next;

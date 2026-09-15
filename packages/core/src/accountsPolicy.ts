@@ -190,7 +190,7 @@ export const SOFT_ACCOUNT_LIMIT = 20;
  * every start, so changing a value or a position here would silently repaint
  * every existing user's accounts. Append, never reorder. Warm tones first
  * (the brand palette), then cooler hues so neighbours stay distinguishable at
- * Stream Deck key size.
+ * small key/icon sizes.
  */
 export const ACCOUNT_PALETTE: readonly string[] = [
   "#D0776C", "#F2C744", "#E5534B", "#E0A458", "#E5A38A", "#B5483A",

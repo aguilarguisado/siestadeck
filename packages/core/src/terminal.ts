@@ -44,6 +44,6 @@ export function notify(title: string, body: string): void {
     spawn("osascript", ["-e", script], { detached: true, stdio: "ignore" }).unref();
     return;
   }
-  // Windows / others: no toast in v0.1. The caller's `streamDeck.logger` call
-  // (if any) still surfaces the message in the plugin log.
+  // Windows / others: no toast in v0.1. The caller's own logger call (if any)
+  // still surfaces the message in the host's log.
 }

@@ -14,6 +14,11 @@
  * oversights: `keychain.ts`, `credentialStore.ts`, `oauthRefresh.ts` (credential
  * handling is `accountsService`'s job and nothing outside should reach past it),
  * `idle.ts`, `log()` itself, and every policy helper except `pickNextSlug`.
+ * Also internal: `claudeSettingsJson` and `readClaudeSettings`, because
+ * `updateClaudeSettings(fn)` is the only safe way to touch a file Claude Code
+ * owns; `MIN_AUTO_POLL_MS`, because the clamp is enforced in the service and a
+ * host's settings form can't import it anyway (the Property Inspector is plain
+ * HTML in a webview); and `resetLogger`, which only core's own tests need.
  *
  * **Hosts are separate processes, not separate instances.** Each gets its own
  * module registry and therefore its own singletons, which is why this file
@@ -25,7 +30,7 @@
 // ── host seam ───────────────────────────────────────────────────────────────
 // Bind once at startup, before accountsService.start(). Anything logged before
 // that is silently dropped — the default sink is a no-op, not console.
-export { setLogger, resetLogger, type Logger } from "./log.js";
+export { setLogger, type Logger } from "./log.js";
 
 // ── services ────────────────────────────────────────────────────────────────
 export { accountsService, AccountsService, type Account } from "./accounts.js";
@@ -45,11 +50,6 @@ export type {
   BackoffReason,
 } from "./quotaPolicy.js";
 
-// ── tunables a host UI must agree with ──────────────────────────────────────
-// The one knob a host surfaces to the user. `enableAutoRefresh` clamps to this
-// internally; exporting it stops each host hardcoding "5 minutes" in its form.
-export { MIN_AUTO_POLL_MS } from "./quotaPolicy.js";
-
 // ── account cycle order ─────────────────────────────────────────────────────
 // Callers pass `Account[]`, which structurally satisfies the `Orderable[]`
 // parameter, so the ordering contract itself stays private.
@@ -57,12 +57,7 @@ export { pickNextSlug } from "./accountsPolicy.js";
 
 // ── platform + owned files ──────────────────────────────────────────────────
 export { isMac, isWindows } from "./platform.js";
-export { claudeSettingsJson } from "./paths.js";
-export {
-  readClaudeSettings,
-  updateClaudeSettings,
-  type ClaudeSettings,
-} from "./claudeSettings.js";
+export { updateClaudeSettings, type ClaudeSettings } from "./claudeSettings.js";
 
 // ── host-side shell utilities ───────────────────────────────────────────────
 // Plain cross-platform Node helpers a host may use or ignore. No core service

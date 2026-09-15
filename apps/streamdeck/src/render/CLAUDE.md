@@ -14,11 +14,11 @@ action ── renderQuotaMeter({...}) ──▶ "<svg>...</svg>"
 
 ## Why pre-rasterize in the plugin
 
-Stream Deck can rasterize SVG itself, but it's noticeably slower — especially when the user is fiddling PI settings and we re-render multiple times per second. resvg-wasm in the Node host with an LRU cache is materially faster (`rasterize.ts:38-43`).
+Stream Deck can rasterize SVG itself, but it's noticeably slower — especially when the user is fiddling PI settings and we re-render multiple times per second. resvg-wasm in the Node host with an LRU cache is materially faster (`rasterize.ts:51-59`).
 
 ## The cache
 
-`toImageUri` caches by **exact SVG string** with an LRU cap of 256 entries (`rasterize.ts:32-33,57-61`). Practical implications:
+`toImageUri` caches by **exact SVG string** with an LRU cap of 256 entries (`rasterize.ts:48-49,73-77`). Practical implications:
 
 - Toggling 5h ⇄ 7d on a quota meter is free after the first render of each.
 - Tiny string changes bust the cache: an embedded timestamp, random nonce, or floating-point noise will defeat it. Round / quantize values you serialize into the SVG.
@@ -46,7 +46,7 @@ Single source of truth for colors and the 144px size constant. The `quotaColor(u
 
 ## SVG conventions
 
-- Target size is **144 × 144** (`rasterize.ts:7`). Stream Deck downscales to the actual key size.
+- Target size is **144 × 144** (`rasterize.ts:9`). Stream Deck downscales to the actual key size.
 - Keep markup compact — every byte goes through wasm and is cached by content. Strip comments and excess whitespace.
 - Use `"Helvetica, Arial, sans-serif"` in `font-family` (the existing convention). resvg's shaping is unforgiving with unloaded families — keep it to the platform set we actually load.
-- The background is transparent (`background: "rgba(0,0,0,0)"` at `rasterize.ts:50`); fill the canvas explicitly inside the SVG if you want a solid color.
+- The background is transparent (`background: "rgba(0,0,0,0)"` at `rasterize.ts:66`); fill the canvas explicitly inside the SVG if you want a solid color.

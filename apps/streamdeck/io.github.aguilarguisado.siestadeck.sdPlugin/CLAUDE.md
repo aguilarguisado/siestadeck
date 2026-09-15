@@ -22,7 +22,7 @@ Each action in `manifest.json` has a `UUID` that **must** match the `@action({ U
 | `io.github.aguilarguisado.siestadeck.switch-account` | `SwitchAccount` | `apps/streamdeck/src/actions/switchAccount.ts` |
 | `io.github.aguilarguisado.siestadeck.login-logout` | `LoginLogout` | `apps/streamdeck/src/actions/loginLogout.ts` |
 
-Adding an action requires **all three**: a manifest entry, a class with the matching `@action` UUID, and a `streamDeck.actions.registerAction(...)` call in `apps/streamdeck/src/plugin.ts:17-21`.
+Adding an action requires **all three**: a manifest entry, a class with the matching `@action` UUID, and a `streamDeck.actions.registerAction(...)` call in `apps/streamdeck/src/plugin.ts:33-37`.
 
 ## Property Inspector HTML
 
@@ -34,7 +34,7 @@ Each action's `PropertyInspectorPath` (e.g. `pi/quotaMeter.html`) loads when the
 
 ## Manifest constraints
 
-- `OS: [{ Platform: "mac", MinimumVersion: "12" }]` — macOS 12+ only. Helvetica path in `apps/streamdeck/src/render/rasterize.ts:8` assumes this.
+- `OS: [{ Platform: "mac", MinimumVersion: "12" }]` — macOS 12+ only. Helvetica path in `apps/streamdeck/src/render/rasterize.ts:15` assumes this.
 - `Nodejs: { Version: "20", Debug: "enabled" }` — Stream Deck spawns Node 20 and exposes the inspector. Connect via `chrome://inspect` or the Stream Deck dev tools URL printed in logs.
 - `SDKVersion: 2`, `Software.MinimumVersion: "6.5"` — bumping these breaks older Stream Deck app installs.
 - Bumping plugin `Version` is required for users to receive updates from a `.streamDeckPlugin` install.

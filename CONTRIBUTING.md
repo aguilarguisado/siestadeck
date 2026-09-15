@@ -37,7 +37,7 @@ Before changing code, read the per-directory `CLAUDE.md` files — they document
 
 1. **Actions are stateless renderers.** They never poll, never fetch, never read files. They subscribe to a service snapshot and re-render. All polling, file watching, network calls, rate-limiting, and caching live in `packages/core/src/`.
 2. **Services are EventEmitter singletons.** Each exports a single default instance (`accountsService`, `quotaRegistry`, `activeSessionService`). Never `new` them in actions.
-3. **`Bundler` resolution + `.js` import suffixes.** Even though sources are `.ts`, intra-repo imports use the `.js` extension (see `apps/streamdeck/src/plugin.ts:3-13`). Don't strip them.
+3. **`Bundler` resolution + `.js` import suffixes.** Even though sources are `.ts`, intra-repo imports use the `.js` extension (see `apps/streamdeck/src/plugin.ts:3-16`). Don't strip them.
 4. **`unref()` every long-lived timer** that should not keep the Node event loop alive. The plugin host shuts down cleanly only if no live timers remain.
 
 ## Pull request conventions
@@ -46,10 +46,6 @@ Before changing code, read the per-directory `CLAUDE.md` files — they document
 - Run `npm run validate` and `npm run build` locally before pushing — CI will run them, but failing fast saves time.
 - For UI/SVG changes: include before/after screenshots of the rendered key.
 - For new public surface (services, actions): update the relevant `CLAUDE.md`.
-
-## Type checking
-
-There is no separate type-check command — `rollup -c` (which runs `@rollup/plugin-typescript` in strict mode) is the correctness gate. If `npm run build` succeeds, types are fine.
 
 ## Reporting issues
 

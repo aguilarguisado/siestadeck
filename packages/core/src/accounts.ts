@@ -1,7 +1,6 @@
 import { EventEmitter } from "node:events";
 import os from "node:os";
 
-
 import {
   readClaudeCredentials,
   readGenericPassword,
