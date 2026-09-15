@@ -74,11 +74,40 @@ export const macStore: CredentialStore = {
 // under CurrentUser scope and persisted as a single file under
 // %APPDATA%\siestadeck\creds\<key>.bin. No native module required.
 //
-// PowerShell spawn cost (~150-300ms each) is amortized by a per-process LRU
-// cache; account swaps invalidate cached entries by overwriting the file.
+// PowerShell spawn cost (~150-300ms each) is amortized by a per-process cache
+// stamped with the backing file's identity.
+//
+// Validating that cache against the file is what makes it safe to share a
+// machine with a second siesta app. Caching by key alone was a per-process
+// cache of a file another process rewrites: app A hits a 401, redeems the
+// single-use refresh_token and writes a new stash; app B keeps returning the
+// old blob forever, redeems an already-spent refresh token, earns a 400 and
+// parks itself in a 30-minute auth backoff pinned to that dead token. The user
+// logs in again, B re-reads its own cache, sees the same dead token,
+// `shouldClearAuthBackoff` stays false, and the LOG IN tile never clears. One
+// fs.readFile per read buys that back; the expensive part was always the
+// PowerShell spawn, which reading the bytes still avoids.
 
 const PS_TIMEOUT_MS = 5_000;
-const dpapiCache = new Map<string, string>();
+
+type DpapiEntry = { hash: string; plain: string };
+const dpapiCache = new Map<string, DpapiEntry>();
+
+/**
+ * Identity of a blob, taken from the bytes themselves.
+ *
+ * An mtime+size stamp is cheaper to obtain but cannot be taken safely on the
+ * write path: between our `writeFile` and a `stat` of what we wrote, a second
+ * app can replace the file, and we would cache *our* plaintext under *their*
+ * stamp — an entry that matches on every subsequent read and therefore never
+ * re-decrypts. That is the stale-credential failure above, reintroduced by the
+ * very code meant to prevent it. Hashing the ciphertext we already hold has no
+ * such window: the identity comes from the bytes, not from a second filesystem
+ * observation that can race with another writer.
+ */
+function hashOf(cipher: Buffer): string {
+  return createHash("sha1").update(cipher).digest("hex");
+}
 
 function credKey(service: string, account?: string): string {
   const composite = account ? `${service}__${account}` : service;
@@ -164,18 +193,37 @@ async function dpapiUnprotect(cipher: Buffer): Promise<string> {
 export const winStore: CredentialStore = {
   async read(service: string, account?: string): Promise<string> {
     const key = credKey(service, account);
+    const file = credPath(service, account);
+    let cipher: Buffer;
+    try {
+      cipher = await fs.readFile(file);
+    } catch (err) {
+      // No file (or unreadable): drop any entry rather than leave a blob that
+      // outlives the credential it came from, and surface the error exactly as
+      // the bare readFile used to.
+      dpapiCache.delete(key);
+      throw err;
+    }
+    // Hashed from the bytes we are about to decrypt, so the entry describes
+    // exactly the blob it came from no matter who wrote the file when.
+    const hash = hashOf(cipher);
     const cached = dpapiCache.get(key);
-    if (cached !== undefined) return cached;
-    const cipher = await fs.readFile(credPath(service, account));
+    if (cached?.hash === hash) return cached.plain;
     const plain = await dpapiUnprotect(cipher);
-    dpapiCache.set(key, plain);
+    dpapiCache.set(key, { hash, plain });
     return plain;
   },
   async write(service: string, account: string, password: string): Promise<void> {
     const cipher = await dpapiProtect(password);
     await fs.mkdir(winCredsDir, { recursive: true });
-    await fs.writeFile(credPath(service, account), cipher);
-    dpapiCache.set(credKey(service, account), password);
+    const file = credPath(service, account);
+    await fs.writeFile(file, cipher);
+    // Keyed on the ciphertext we just wrote, so this process keeps its own
+    // amortization rather than paying a spawn to re-learn its own secret.
+    // Deliberately not a stat of the file: see hashOf. If another app
+    // overwrites the blob after this, its bytes hash differently and the next
+    // read re-decrypts.
+    dpapiCache.set(credKey(service, account), { hash: hashOf(cipher), plain: password });
   },
 };
 

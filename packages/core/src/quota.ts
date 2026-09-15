@@ -80,6 +80,47 @@ type AccountState = {
 export class QuotaRegistry extends EventEmitter {
   private accounts = new Map<string, AccountState>();
 
+  /**
+   * Park `state` until `until`, recording why.
+   *
+   * `token` is only meaningful for `"auth"`: it is the credential the verdict
+   * was passed on, so a later refresh can tell "the login is still lost" from
+   * "a new credential has landed since". A `"rate"` backoff clears it, because
+   * a 429 says nothing about the credential and leaving a stale token behind
+   * would let `shouldClearAuthBackoff` read it later as evidence.
+   *
+   * Does not publish. Callers publish after, so the snapshot they build sees
+   * the reason this just set.
+   */
+  private setBackoff(
+    state: AccountState,
+    until: number,
+    reason: BackoffReason,
+    token?: string,
+  ): void {
+    state.backoffUntil = until;
+    state.backoffReason = reason;
+    state.authFailedToken = reason === "auth" ? token : undefined;
+  }
+
+  /**
+   * Drop any backoff on `state`.
+   *
+   * `resetAttempt` additionally zeroes `lastAttemptAt`, which defeats the 5s
+   * coalesce floor so a refresh issued right afterwards actually reaches the
+   * network. Exactly one caller wants that — the re-login path, where the whole
+   * point is to get the gauge back within a couple of seconds — so it is a
+   * named argument rather than a default. Turning it on everywhere would
+   * quietly delete the coalescing that stops a double-press becoming two
+   * requests.
+   */
+  private clearBackoff(state: AccountState, opts: { resetAttempt?: boolean } = {}): void {
+    state.backoffUntil = 0;
+    state.backoffReason = undefined;
+    state.authFailedToken = undefined;
+    if (opts.resetAttempt) state.lastAttemptAt = 0;
+  }
+
   start(): void {
     this.sync();
     accountsService.on("changed", () => {
@@ -91,10 +132,9 @@ export class QuotaRegistry extends EventEmitter {
       let recovered = false;
       for (const s of this.accounts.values()) {
         if (s.backoffReason === "auth") {
-          s.backoffUntil = 0;
-          s.backoffReason = undefined;
-          s.authFailedToken = undefined;
-          s.lastAttemptAt = 0;
+          // resetAttempt: without it the refresh below lands inside the 5s
+          // coalesce window and the tile stays on LOG IN after a good re-login.
+          this.clearBackoff(s, { resetAttempt: true });
           recovered = true;
         }
       }
@@ -173,8 +213,7 @@ export class QuotaRegistry extends EventEmitter {
       if ("status" in result) {
         if (result.status === 429) {
           const wait = computeBackoffMs(result.retryAfter);
-          state.backoffUntil = now + wait;
-          state.backoffReason = "rate";
+          this.setBackoff(state, now + wait, "rate");
           this.publishError(state, backoffLabel("rate", wait), state.backoffUntil);
         } else if (result.status === 401 || result.status === 403) {
           // Stale/expired OAuth token. Try refreshing once via the stashed
@@ -183,9 +222,7 @@ export class QuotaRegistry extends EventEmitter {
           // repeated auto-polls don't trip Anthropic's WAF.
           const { recovered, lastToken } = await this.tryRefreshAndRetry(state, token);
           if (!recovered) {
-            state.backoffUntil = now + UNAUTHORIZED_BACKOFF_MS;
-            state.backoffReason = "auth";
-            state.authFailedToken = lastToken;
+            this.setBackoff(state, now + UNAUTHORIZED_BACKOFF_MS, "auth", lastToken);
             this.publishError(
               state,
               `auth expired (${result.status})`,
@@ -196,9 +233,7 @@ export class QuotaRegistry extends EventEmitter {
           this.publishError(state, `HTTP ${result.status}`);
         }
       } else {
-        state.backoffUntil = 0;
-        state.backoffReason = undefined;
-        state.authFailedToken = undefined;
+        this.clearBackoff(state);
         const snap = buildSnapshot(state.slug, result);
         state.latest = snap;
         this.publish(state, snap);
@@ -236,9 +271,7 @@ export class QuotaRegistry extends EventEmitter {
       currentToken: current,
     });
     if (!stale) return null;
-    state.backoffUntil = 0;
-    state.backoffReason = undefined;
-    state.authFailedToken = undefined;
+    this.clearBackoff(state);
     log().info(`quota[${state.slug}]: new credential on file — dropping auth backoff`);
     return current;
   }
@@ -275,9 +308,7 @@ export class QuotaRegistry extends EventEmitter {
     try {
       const result = await fetchUsage(token);
       if ("status" in result) return { recovered: false, lastToken: token };
-      state.backoffUntil = 0;
-      state.backoffReason = undefined;
-      state.authFailedToken = undefined;
+      this.clearBackoff(state);
       const snap = buildSnapshot(state.slug, result);
       state.latest = snap;
       this.publish(state, snap);
@@ -403,6 +434,12 @@ export class QuotaRegistry extends EventEmitter {
   }
 
   private publishError(state: AccountState, error: string, cooldownUntilMs?: number): void {
+    // One predicate for both fields. They used to disagree — truthiness for the
+    // timestamp, nullish for the reason — so a cooldownUntilMs of 0 would have
+    // published a null cooldown with a populated reason, and the tile reads the
+    // reason on its own in one place. No caller passes 0 today; the point is
+    // that the snapshot cannot describe a cooldown that isn't there.
+    const cooling = cooldownUntilMs != null && cooldownUntilMs > 0;
     const snap: QuotaSnapshot = {
       slug: state.slug,
       fiveHour: state.latest?.fiveHour ?? null,
@@ -411,8 +448,8 @@ export class QuotaRegistry extends EventEmitter {
       extraUsage: state.latest?.extraUsage,
       fetchedAt: new Date(),
       error,
-      cooldownUntil: cooldownUntilMs ? new Date(cooldownUntilMs) : null,
-      cooldownReason: cooldownUntilMs != null ? state.backoffReason : undefined,
+      cooldownUntil: cooling ? new Date(cooldownUntilMs) : null,
+      cooldownReason: cooling ? state.backoffReason : undefined,
     };
     state.latest = snap;
     this.publish(state, snap);

@@ -8,9 +8,10 @@ vi.mock("node:child_process", async () => {
   return { ...actual, spawn: spawnMock };
 });
 
-const { mkdirMock, readFileMock, writeFileMock } = vi.hoisted(() => ({
+const { mkdirMock, readFileMock, statMock, writeFileMock } = vi.hoisted(() => ({
   mkdirMock: vi.fn(),
   readFileMock: vi.fn(),
+  statMock: vi.fn(),
   writeFileMock: vi.fn(),
 }));
 
@@ -22,10 +23,12 @@ vi.mock("node:fs/promises", async () => {
       ...actual.default,
       mkdir: mkdirMock,
       readFile: readFileMock,
+      stat: statMock,
       writeFile: writeFileMock,
     },
     mkdir: mkdirMock,
     readFile: readFileMock,
+    stat: statMock,
     writeFile: writeFileMock,
   };
 });
@@ -55,6 +58,7 @@ beforeEach(() => {
   spawnMock.mockReset();
   mkdirMock.mockReset().mockResolvedValue(undefined);
   readFileMock.mockReset();
+  statMock.mockReset().mockResolvedValue({ mtimeMs: 1_000, size: 10 });
   writeFileMock.mockReset().mockResolvedValue(undefined);
 });
 
@@ -184,6 +188,130 @@ describe("winStore (DPAPI via PowerShell)", () => {
     await flush();
     proc.emit("error", new Error("ENOENT powershell"));
     await expect(promise).rejects.toThrow(/ENOENT powershell/);
+  });
+
+  it("re-decrypts when another process has rewritten the blob", async () => {
+    // The whole point of validating the cache. Without it this returns the
+    // first value forever: the other app has already spent the single-use
+    // refresh_token, so a cached stale blob means a 400, a 30-minute auth
+    // backoff pinned to a dead token, and a LOG IN tile that never clears even
+    // after the user re-logs in.
+    readFileMock.mockResolvedValue(Buffer.from("cipher-v1"));
+    const first = nextSpawn();
+    const p1 = winStore.read("svc-rewritten", "user");
+    await flush();
+    first.stdout.emit("data", "token-v1");
+    first.emit("close", 0);
+    expect(await p1).toBe("token-v1");
+
+    // Another process rewrites the file: same path, different bytes.
+    readFileMock.mockResolvedValue(Buffer.from("cipher-v2"));
+    const second = nextSpawn();
+    const p2 = winStore.read("svc-rewritten", "user");
+    await flush();
+    second.stdout.emit("data", "token-v2");
+    second.emit("close", 0);
+    expect(await p2).toBe("token-v2");
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-decrypts a same-length rewrite landing inside one mtime tick", async () => {
+    // An mtime+size stamp cannot see this one: both writes are 8 bytes and
+    // filesystem timestamp granularity is coarse enough to put them in the same
+    // tick. Hashing the ciphertext does not care about either.
+    readFileMock.mockResolvedValue(Buffer.from("cipher-a"));
+    const first = nextSpawn();
+    const p1 = winStore.read("svc-sametick", "user");
+    await flush();
+    first.stdout.emit("data", "token-a");
+    first.emit("close", 0);
+    await p1;
+
+    readFileMock.mockResolvedValue(Buffer.from("cipher-b"));
+    const second = nextSpawn();
+    const p2 = winStore.read("svc-sametick", "user");
+    await flush();
+    second.stdout.emit("data", "token-b");
+    second.emit("close", 0);
+    expect(await p2).toBe("token-b");
+  });
+
+  it("serves the cache without a spawn while the blob is untouched", async () => {
+    // Re-reading the bytes must not cost us the amortization it protects — the
+    // expensive part was always the PowerShell spawn, not the file read.
+    readFileMock.mockResolvedValue(Buffer.from("cipher"));
+    const proc = nextSpawn();
+    const promise = winStore.read("svc-stable", "user");
+    await flush();
+    proc.stdout.emit("data", "token");
+    proc.emit("close", 0);
+    await promise;
+
+    expect(await winStore.read("svc-stable", "user")).toBe("token");
+    expect(await winStore.read("svc-stable", "user")).toBe("token");
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(readFileMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("caches what it just wrote, so the writer never pays a spawn to read it back", async () => {
+    const proc = nextSpawn();
+    const promise = winStore.write("svc-writeback", "user", "fresh-secret");
+    await flush();
+    proc.stdout.emit("data", Buffer.from("cipher"));
+    proc.emit("close", 0);
+    await promise;
+
+    // The file holds exactly what we wrote, so the hash matches and the entry
+    // stands: one cheap read, no Unprotect spawn.
+    readFileMock.mockResolvedValue(Buffer.from("cipher"));
+    expect(await winStore.read("svc-writeback", "user")).toBe("fresh-secret");
+    expect(spawnMock).toHaveBeenCalledTimes(1); // the Protect only; no Unprotect
+  });
+
+  it("re-decrypts when someone overwrote the blob just after our own write", async () => {
+    // The write path must not stamp its entry from a second observation of the
+    // file: between our writeFile and that observation another app can replace
+    // the blob, and pairing our plaintext with their identity yields an entry
+    // that matches on every later read and never re-decrypts — the stale
+    // credential this whole cache-validation exists to prevent, reintroduced by
+    // the code meant to prevent it.
+    const proc = nextSpawn();
+    const promise = winStore.write("svc-clobbered", "user", "our-secret");
+    await flush();
+    proc.stdout.emit("data", Buffer.from("our-cipher"));
+    proc.emit("close", 0);
+    await promise;
+
+    // Their bytes are on disk now, not ours.
+    readFileMock.mockResolvedValue(Buffer.from("their-cipher"));
+    const reread = nextSpawn();
+    const p = winStore.read("svc-clobbered", "user");
+    await flush();
+    reread.stdout.emit("data", "their-secret");
+    reread.emit("close", 0);
+    expect(await p).toBe("their-secret");
+  });
+
+  it("drops the entry and surfaces the error when the blob is gone", async () => {
+    readFileMock.mockResolvedValue(Buffer.from("cipher"));
+    const proc = nextSpawn();
+    const promise = winStore.read("svc-deleted", "user");
+    await flush();
+    proc.stdout.emit("data", "token");
+    proc.emit("close", 0);
+    await promise;
+
+    readFileMock.mockRejectedValue(Object.assign(new Error("nope"), { code: "ENOENT" }));
+    await expect(winStore.read("svc-deleted", "user")).rejects.toThrow("nope");
+
+    // And the dead entry is not resurrected if the file comes back byte-identical.
+    readFileMock.mockResolvedValue(Buffer.from("cipher"));
+    const revived = nextSpawn();
+    const p = winStore.read("svc-deleted", "user");
+    await flush();
+    revived.stdout.emit("data", "token-new");
+    revived.emit("close", 0);
+    expect(await p).toBe("token-new");
   });
 });
 
