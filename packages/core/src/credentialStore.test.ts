@@ -8,9 +8,10 @@ vi.mock("node:child_process", async () => {
   return { ...actual, spawn: spawnMock };
 });
 
-const { mkdirMock, readFileMock, writeFileMock } = vi.hoisted(() => ({
+const { mkdirMock, readFileMock, statMock, writeFileMock } = vi.hoisted(() => ({
   mkdirMock: vi.fn(),
   readFileMock: vi.fn(),
+  statMock: vi.fn(),
   writeFileMock: vi.fn(),
 }));
 
@@ -22,10 +23,12 @@ vi.mock("node:fs/promises", async () => {
       ...actual.default,
       mkdir: mkdirMock,
       readFile: readFileMock,
+      stat: statMock,
       writeFile: writeFileMock,
     },
     mkdir: mkdirMock,
     readFile: readFileMock,
+    stat: statMock,
     writeFile: writeFileMock,
   };
 });
@@ -55,6 +58,9 @@ beforeEach(() => {
   spawnMock.mockReset();
   mkdirMock.mockReset().mockResolvedValue(undefined);
   readFileMock.mockReset();
+  // winStore.read stats before it reads. A default stamp keeps every test that
+  // doesn't care about invalidation reading as it always did.
+  statMock.mockReset().mockResolvedValue({ mtimeMs: 1_000, size: 10 });
   writeFileMock.mockReset().mockResolvedValue(undefined);
 });
 
@@ -184,6 +190,107 @@ describe("winStore (DPAPI via PowerShell)", () => {
     await flush();
     proc.emit("error", new Error("ENOENT powershell"));
     await expect(promise).rejects.toThrow(/ENOENT powershell/);
+  });
+
+  it("re-decrypts when another process has rewritten the blob", async () => {
+    // The whole point of the stamp. Without it this returns the first value
+    // forever: the other app has already spent the single-use refresh_token, so
+    // a cached stale blob means a 400, a 30-minute auth backoff pinned to a dead
+    // token, and a LOG IN tile that never clears even after the user re-logs in.
+    readFileMock.mockResolvedValue(Buffer.from("cipher-v1"));
+    statMock.mockResolvedValue({ mtimeMs: 1_000, size: 10 });
+    const first = nextSpawn();
+    const p1 = winStore.read("svc-rewritten", "user");
+    await flush();
+    first.stdout.emit("data", "token-v1");
+    first.emit("close", 0);
+    expect(await p1).toBe("token-v1");
+
+    // Another process rewrites the file: same path, new mtime.
+    readFileMock.mockResolvedValue(Buffer.from("cipher-v2"));
+    statMock.mockResolvedValue({ mtimeMs: 2_000, size: 12 });
+    const second = nextSpawn();
+    const p2 = winStore.read("svc-rewritten", "user");
+    await flush();
+    second.stdout.emit("data", "token-v2");
+    second.emit("close", 0);
+    expect(await p2).toBe("token-v2");
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-decrypts when only the size changed, for writes inside one mtime tick", async () => {
+    readFileMock.mockResolvedValue(Buffer.from("cipher-a"));
+    statMock.mockResolvedValue({ mtimeMs: 5_000, size: 10 });
+    const first = nextSpawn();
+    const p1 = winStore.read("svc-sametick", "user");
+    await flush();
+    first.stdout.emit("data", "token-a");
+    first.emit("close", 0);
+    await p1;
+
+    statMock.mockResolvedValue({ mtimeMs: 5_000, size: 99 });
+    const second = nextSpawn();
+    const p2 = winStore.read("svc-sametick", "user");
+    await flush();
+    second.stdout.emit("data", "token-b");
+    second.emit("close", 0);
+    expect(await p2).toBe("token-b");
+  });
+
+  it("serves the cache without a spawn while the blob is untouched", async () => {
+    // The stat must not cost us the amortization it protects — the expensive
+    // part was always the PowerShell spawn.
+    readFileMock.mockResolvedValue(Buffer.from("cipher"));
+    statMock.mockResolvedValue({ mtimeMs: 7_000, size: 42 });
+    const proc = nextSpawn();
+    const promise = winStore.read("svc-stable", "user");
+    await flush();
+    proc.stdout.emit("data", "token");
+    proc.emit("close", 0);
+    await promise;
+
+    expect(await winStore.read("svc-stable", "user")).toBe("token");
+    expect(await winStore.read("svc-stable", "user")).toBe("token");
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(readFileMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("caches what it just wrote, so the writer never pays a spawn to read it back", async () => {
+    const proc = nextSpawn();
+    statMock.mockResolvedValue({ mtimeMs: 9_000, size: 64 });
+    const promise = winStore.write("svc-writeback", "user", "fresh-secret");
+    await flush();
+    proc.stdout.emit("data", Buffer.from("cipher"));
+    proc.emit("close", 0);
+    await promise;
+
+    expect(await winStore.read("svc-writeback", "user")).toBe("fresh-secret");
+    expect(spawnMock).toHaveBeenCalledTimes(1); // the Protect only; no Unprotect
+    expect(readFileMock).not.toHaveBeenCalled();
+  });
+
+  it("drops the entry and surfaces the error when the blob is gone", async () => {
+    readFileMock.mockResolvedValue(Buffer.from("cipher"));
+    statMock.mockResolvedValue({ mtimeMs: 3_000, size: 8 });
+    const proc = nextSpawn();
+    const promise = winStore.read("svc-deleted", "user");
+    await flush();
+    proc.stdout.emit("data", "token");
+    proc.emit("close", 0);
+    await promise;
+
+    statMock.mockRejectedValue(Object.assign(new Error("nope"), { code: "ENOENT" }));
+    await expect(winStore.read("svc-deleted", "user")).rejects.toThrow("nope");
+
+    // And the dead entry is not resurrected if the file comes back changed.
+    readFileMock.mockResolvedValue(Buffer.from("cipher-new"));
+    statMock.mockResolvedValue({ mtimeMs: 3_000, size: 8 }); // even at the old stamp
+    const revived = nextSpawn();
+    const p = winStore.read("svc-deleted", "user");
+    await flush();
+    revived.stdout.emit("data", "token-new");
+    revived.emit("close", 0);
+    expect(await p).toBe("token-new");
   });
 });
 
