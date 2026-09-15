@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -55,6 +55,45 @@ describe("writeJsonAtomic", () => {
     await writeJsonAtomic(file, { v: 2 });
     expect(JSON.parse(await fs.readFile(file, "utf8"))).toEqual({ v: 2 });
     expect(await fs.readdir(dir)).toEqual(["doc.json"]);
+  });
+
+  it("retries a rename the OS reports as transiently busy, then succeeds", async () => {
+    // Windows MoveFileEx fails with EPERM whenever anything holds a handle to
+    // the destination for the instant of the call. Simulated here because CI is
+    // the only place it reproduces naturally, and only under concurrency.
+    const realRename = fs.rename.bind(fs);
+    let calls = 0;
+    const spy = vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
+      if (++calls < 3) throw Object.assign(new Error("busy"), { code: "EPERM" });
+      return realRename(from, to);
+    });
+    const file = path.join(dir, "doc.json");
+    await writeJsonAtomic(file, { survived: true });
+    expect(calls).toBe(3);
+    expect(JSON.parse(await fs.readFile(file, "utf8"))).toEqual({ survived: true });
+    spy.mockRestore();
+  });
+
+  it("rethrows a non-transient rename error without retrying", async () => {
+    // A real permissions or cross-device problem must surface, not be masked as
+    // a retry — otherwise a genuine misconfiguration looks like a slow write.
+    const spy = vi
+      .spyOn(fs, "rename")
+      .mockRejectedValue(Object.assign(new Error("nope"), { code: "EXDEV" }));
+    await expect(writeJsonAtomic(path.join(dir, "doc.json"), { a: 1 })).rejects.toThrow("nope");
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+
+  it("gives up after a bounded number of retries rather than hanging", async () => {
+    const spy = vi
+      .spyOn(fs, "rename")
+      .mockRejectedValue(Object.assign(new Error("still busy"), { code: "EBUSY" }));
+    await expect(writeJsonAtomic(path.join(dir, "doc.json"), { a: 1 })).rejects.toThrow(
+      "still busy",
+    );
+    expect(spy).toHaveBeenCalledTimes(3);
+    spy.mockRestore();
   });
 
   it("gives concurrent writes unique temp names, so neither truncates the other", async () => {
