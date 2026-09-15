@@ -58,6 +58,11 @@ export { pickNextSlug } from "./accountsPolicy.js";
 // ── platform + owned files ──────────────────────────────────────────────────
 export { isMac, isWindows } from "./platform.js";
 export { claudeSettingsJson } from "./paths.js";
+export {
+  readClaudeSettings,
+  updateClaudeSettings,
+  type ClaudeSettings,
+} from "./claudeSettings.js";
 
 // ── host-side shell utilities ───────────────────────────────────────────────
 // Plain cross-platform Node helpers a host may use or ignore. No core service

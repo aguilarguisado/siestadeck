@@ -6,11 +6,11 @@ import {
   type WillAppearEvent,
   type WillDisappearEvent,
 } from "@elgato/streamdeck";
-import fs from "node:fs/promises";
 
 import {
   activeSessionService,
-  claudeSettingsJson as SETTINGS_PATH,
+  readClaudeSettings,
+  updateClaudeSettings,
   type ActiveSessionSnapshot,
 } from "@siesta/core";
 
@@ -19,16 +19,6 @@ import { drawActiveModel, shortName } from "./draw/activeModel.js";
 
 type Settings = Record<string, never>;
 const CYCLE: readonly string[] = ["opus", "haiku", "sonnet"] as const;
-
-async function readSettings(): Promise<Record<string, unknown>> {
-  try {
-    const raw = await fs.readFile(SETTINGS_PATH, "utf8");
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-}
 
 @action({ UUID: "io.github.aguilarguisado.siestadeck.active-model" })
 export class ActiveModel extends SingletonAction<Settings> {
@@ -66,13 +56,16 @@ export class ActiveModel extends SingletonAction<Settings> {
   override async onKeyDown(ev: KeyDownEvent<Settings>): Promise<void> {
     if (!ev.action.isKey()) return;
     try {
-      const settings = await readSettings();
+      const settings = await readClaudeSettings();
       const current = typeof settings.model === "string" ? settings.model.toLowerCase() : "";
       const currentIdx = CYCLE.findIndex((m) => current.includes(m));
       const nextIdx = currentIdx < 0 ? 0 : (currentIdx + 1) % CYCLE.length;
       const next = CYCLE[nextIdx]!;
-      settings.model = next;
-      await fs.writeFile(SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n", "utf8");
+      // Re-read inside the update so we only ever clobber `model` — settings.json
+      // belongs to Claude Code, and it may have written other keys since.
+      await updateClaudeSettings((s) => {
+        s.model = next;
+      });
       this.pinned = next;
       const snap = activeSessionService.snapshot ?? null;
       for (const a of this.visible.values()) void this.draw(a, snap);
