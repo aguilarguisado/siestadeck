@@ -69,6 +69,19 @@ This package is consumed by more than one app, so it must not assume which. CI e
 5. Export whatever a host genuinely needs from `index.ts` — and nothing else.
 6. Register subscriptions or eager start in `apps/streamdeck/src/plugin.ts`. Wire device-disconnect / device-connect handlers if the service should suspend when no Stream Decks are visible.
 
-## Known gap: this package assumes it is the only process
+## Sharing a machine with a second app
 
-Every rate-limit and registry invariant in here is per-process, in-memory state. That holds today because the Stream Deck plugin is the only consumer; it stops holding the moment a second app runs alongside it. See the follow-up issue before building `apps/desktop` — in particular `accounts.ts` reads the registry from disk once in `start()` and never re-reads it, while seven call sites write the whole document back.
+The Stream Deck plugin is the only consumer today, but the data it owns is not
+process-local: `accounts.json`, the credential stashes and the Anthropic rate
+limit are all shared the moment `apps/desktop` runs alongside it. What is
+already safe, and what is still deliberately not:
+
+- **Registry writes re-read first.** `mutateRegistry` above. Last-write-wins, not atomic.
+- **The Windows DPAPI cache re-validates against the file.** Entries carry the blob's mtime+size (`credentialStore.ts`); a stale entry used to mean a spent refresh token, a 30-minute auth backoff and a `LOG IN` tile that never cleared. macOS has no such cache.
+- **`reload()` exists but nothing triggers it automatically.** The host calls it — `plugin.ts` does so on wake and device-connect. A watcher on `accounts.json` is the natural next step and belongs in the PR that needs it.
+- **429 backoff is still per-process, on purpose.** Both apps independently obey the same 1→10min floor, so the worst case is 2× the request rate, self-healing, with nothing corrupted. A shared `quota-cache.json` is the most machinery for the least damage, and defining a file format before a second consumer exists to validate it is backwards. `setBackoff()` / `clearBackoff()` in `quota.ts` are where that would wire in — two functions, not eight assignment sites.
+- **No locks, no daemon, no leader election.** Every field in play is monotone or idempotent, so a cross-process lock buys almost nothing and adds a stale-holder liveness problem that is strictly worse. A "designated fetcher" process is a daemon wearing a hat.
+
+Still per-process and unexamined: `activeSession.ts`'s file watching (two apps
+tailing the same JSONL is wasteful but not incorrect) and the `/profile` email
+memo in `accounts.ts`.

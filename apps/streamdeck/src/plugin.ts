@@ -76,16 +76,33 @@ streamDeck.devices.onDeviceDidDisconnect(() => {
   activeSessionService.releaseAll();
 });
 
+// Another siesta app may have added, removed or switched accounts while this
+// one was idle, and nothing pushes that across processes. Both moments below are
+// the cheapest honest approximation of "we may have missed something": re-read
+// the registry, and let the service decide whether anything actually changed.
+// It stays silent when the document is unchanged, which matters — quotaRegistry
+// answers "changed" with a network refresh.
+function syncRegistryFromDisk(reason: string): void {
+  void accountsService.reload().then(
+    (changed) => {
+      if (changed) streamDeck.logger.info(`accounts: registry changed while ${reason}`);
+    },
+    (err) => streamDeck.logger.warn(`accounts: reload after ${reason} failed: ${err}`),
+  );
+}
+
 streamDeck.devices.onDeviceDidConnect(() => {
   // Visible actions re-acquire the local services via their own onWillAppear
   // handlers. We only need to re-arm the quota auto-timers here.
   quotaRegistry.resumeAuto();
+  syncRegistryFromDisk("no device was connected");
 });
 
 streamDeck.system.onSystemDidWakeUp(() => {
   // Clear the per-account 5s coalesce window so a manual press right after
   // wake isn't suppressed. We do NOT auto-fetch on wake.
   quotaRegistry.markAwake();
+  syncRegistryFromDisk("asleep");
 });
 
 streamDeck.connect();
