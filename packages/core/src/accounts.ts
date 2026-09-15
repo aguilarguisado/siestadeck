@@ -92,11 +92,17 @@ export class AccountsService extends EventEmitter {
 
   async start(): Promise<void> {
     // Each helper below re-reads the registry itself, so this read is not what
-    // feeds them. It is here because `removeCrossWiredStashes` reads the account
-    // list *outside* its mutation closure, and because `plugin.ts` fires
-    // `void accountsService.start()` without awaiting while the host can deliver
-    // a key's onWillAppear — and therefore `list()` — at any moment.
-    this.registry = await readRegistry();
+    // feeds them. It is here because `plugin.ts` fires `void
+    // accountsService.start()` without awaiting while the host can deliver a
+    // key's onWillAppear — and therefore `list()` — at any moment.
+    //
+    // Queued, not a bare assignment: the host wires device-connect to
+    // `reload()`, which can land on the chain while this read is in flight, and
+    // an unqueued assignment afterwards would clobber the newer document it
+    // just published.
+    await this.enqueue(async () => {
+      this.registry = await readRegistry();
+    });
     await this.reconcilePaletteColors();
     await this.removeCrossWiredStashes();
     await this.adoptCurrentLogin({ intent: "passive" });
@@ -133,13 +139,15 @@ export class AccountsService extends EventEmitter {
    * chain. It receives the document to edit; do not reach for `this.registry`
    * inside it.
    *
-   * Returns true when the document actually changed and was written. Callers
-   * are responsible for emitting `"changed"`: this primitive can adopt another
-   * process's document even when `fn` changes nothing, and an unconditional
-   * emit from here would both double-fire against the call sites and cost a
-   * network refresh (`QuotaRegistry` answers `"changed"` with one).
+   * Returns whatever `fn` returns, so a closure that computes a value — the
+   * slug it adopted, the row it created — can hand it back directly instead of
+   * assigning to a `let` its caller declared. Callers are responsible for
+   * emitting `"changed"`: this primitive can adopt another process's document
+   * even when `fn` changes nothing, and an unconditional emit from here would
+   * both double-fire against the call sites and cost a network refresh
+   * (`QuotaRegistry` answers `"changed"` with one).
    */
-  private mutateRegistry(fn: (reg: Registry) => void | Promise<void>): Promise<boolean> {
+  private mutateRegistry<T>(fn: (reg: Registry) => T | Promise<T>): Promise<T> {
     return this.enqueue(async () => {
       const fresh = await readRegistry();
       const before = registryFingerprint(fresh);
@@ -148,10 +156,9 @@ export class AccountsService extends EventEmitter {
       // queued operation while `fn` is suspended on a keychain write, and
       // fingerprinting or writing the field would then persist a document this
       // closure never touched.
-      await fn(fresh);
-      if (registryFingerprint(fresh) === before) return false;
-      await writeRegistry(fresh);
-      return true;
+      const result = await fn(fresh);
+      if (registryFingerprint(fresh) !== before) await writeRegistry(fresh);
+      return result;
     });
   }
 
@@ -447,8 +454,7 @@ export class AccountsService extends EventEmitter {
     // in-memory copy is empty would conclude "no selection yet" and overwrite
     // the deliberate pick already recorded in the other process's document,
     // breaking the sticky-selection rule this method's contract promises.
-    let adopted: string | null = null;
-    await this.mutateRegistry(async (reg) => {
+    return await this.mutateRegistry<string | null>(async (reg) => {
       const setActive = opts.intent === "explicit" || !this.hasValidSelection(reg);
       const existing = reg.accounts.find((a) => sameEmail(a.email, email));
       if (existing) {
@@ -457,8 +463,7 @@ export class AccountsService extends EventEmitter {
           reg.activeSlug = existing.slug;
           existing.lastUsedAt = new Date().toISOString();
         }
-        adopted = reg.activeSlug;
-        return;
+        return reg.activeSlug;
       }
       const baseName = opts.displayName?.trim() || email.split("@")[0] || "account";
       const slug = this.uniqueSlug(reg, slugify(baseName));
@@ -480,9 +485,8 @@ export class AccountsService extends EventEmitter {
       // whereas an orphan stash is invisible. Costs a keychain spawn inside the
       // read-to-rename window, which the in-process chain makes free of races.
       await this.stashCreds(slug, creds);
-      adopted = reg.activeSlug;
+      return reg.activeSlug;
     });
-    return adopted;
   }
 
   /**
@@ -518,7 +522,11 @@ export class AccountsService extends EventEmitter {
    */
   private async removeCrossWiredStashes(): Promise<void> {
     const entries: StashEntry[] = [];
+    // `addedAt` is captured here, from the same rows the verdict below is
+    // computed about — not re-read afterwards. See the note at the deletion.
+    const addedAt = new Map<string, string>();
     for (const acct of this.registry.accounts) {
+      addedAt.set(acct.slug, acct.addedAt);
       const stash = await this.readStash(acct.slug);
       entries.push({
         slug: acct.slug,
@@ -545,19 +553,24 @@ export class AccountsService extends EventEmitter {
     // expired proof is exactly the "accounts vanishing" failure this method's
     // `unresolved` handling exists to prevent, so pin each verdict to the row it
     // was made about. A re-added account always gets a fresh `addedAt`.
-    const flaggedAt = new Map(
-      flag.map((slug) => [slug, this.get(slug)?.addedAt] as const),
-    );
-    const dropped: string[] = [];
-    await this.mutateRegistry((reg) => {
+    //
+    // Taken from the `addedAt` map built alongside `entries`, not re-read from
+    // `this.registry` here: the field can be reassigned by a queued mutation
+    // during the awaits above, which would pin the verdict to a row from a
+    // document the proof was never about — including the healthy re-added row
+    // this pin exists to spare.
+    const flaggedAt = new Map(flag.map((slug) => [slug, addedAt.get(slug)] as const));
+    const dropped = await this.mutateRegistry((reg) => {
+      const removed: string[] = [];
       const stillCorrupt = (a: Account): boolean =>
         flaggedAt.has(a.slug) && flaggedAt.get(a.slug) === a.addedAt;
       reg.accounts = reg.accounts.filter((a) => {
         if (!stillCorrupt(a)) return true;
-        dropped.push(a.slug);
+        removed.push(a.slug);
         return false;
       });
-      if (reg.activeSlug && dropped.includes(reg.activeSlug)) reg.activeSlug = null;
+      if (reg.activeSlug && removed.includes(reg.activeSlug)) reg.activeSlug = null;
+      return removed;
     });
     if (dropped.length === 0) return;
     log().warn(`accounts: removed cross-wired accounts (re-add via Login): ${dropped.join(", ")}`);
@@ -674,7 +687,7 @@ export class AccountsService extends EventEmitter {
       await writeClaudeCredentials(os.userInfo().username, raw);
     }
     this.emailMemo.clear();
-    await this.mutateRegistry((reg) => {
+    const orphaned = await this.mutateRegistry((reg) => {
       // Re-find in the fresh document: `acct` above belongs to the graph this
       // process held before the read, and stamping it would write nothing.
       const row = reg.accounts.find((a) => a.slug === slug);
@@ -683,11 +696,24 @@ export class AccountsService extends EventEmitter {
       // does not exist — permanently invalid selection, an empty tile, and no
       // way back except a manual re-add. The live credentials we just wrote are
       // the ones the user asked for, so they stand; the selection does not.
-      if (!row) throw new Error(`Account removed while swapping: ${slug}`);
+      //
+      // Reported by returning, not by throwing: `mutateRegistry` writes *after*
+      // `fn`, so a throw here would roll back the `activeSlug = null` that stops
+      // the registry naming the account we just swapped away from, and leave the
+      // stale selection on disk describing a session it no longer owns.
+      if (!row) {
+        reg.activeSlug = null;
+        return true;
+      }
       row.lastUsedAt = new Date().toISOString();
       reg.activeSlug = slug;
+      return false;
     });
+    // Emitted on both paths: the selection moved either way, and consumers that
+    // skipped the update would keep rendering the old account's quota against
+    // credentials that now belong to another.
     this.emit("changed");
+    if (orphaned) throw new Error(`Account removed while swapping: ${slug}`);
     this.emit("swapped", slug);
   }
 
@@ -741,10 +767,9 @@ export class AccountsService extends EventEmitter {
     this.emailMemo.clear();
     // The slug and the palette colour both depend on what is in the registry
     // *now*, and the stash is named after the slug — so all three go inside.
-    let acct!: Account;
-    await this.mutateRegistry(async (reg) => {
+    const acct = await this.mutateRegistry(async (reg) => {
       const slug = this.uniqueSlug(reg, slugify(displayName || email.split("@")[0] || "account"));
-      acct = {
+      const row: Account = {
         slug,
         displayName,
         email,
@@ -755,9 +780,10 @@ export class AccountsService extends EventEmitter {
         lastUsedAt: new Date().toISOString(),
       };
       await this.stashCreds(slug, creds);
-      reg.accounts.push(acct);
+      reg.accounts.push(row);
       this.warnIfCrowded(reg);
       reg.activeSlug = slug;
+      return row;
     });
     this.emit("changed");
     return acct;
