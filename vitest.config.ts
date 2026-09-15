@@ -56,10 +56,15 @@ export default defineConfig({
       //   The pure SVG composition lives in actions/draw/ and is covered at
       //   100%. The wrapper classes can only be exercised against a live
       //   Stream Deck host.
-      // - Core service classes that wrap I/O (accounts/activeSession/quota):
-      //   pure cores extracted into *Policy modules are covered; the wrapper
-      //   classes need an integration harness that hasn't been built yet.
+      // - activeSession.ts: wraps fs watching; its pure core lives in
+      //   activeSessionPolicy.ts and is covered there. No direct tests yet.
       // - index.ts: the @siesta/core barrel, pure re-exports with no logic.
+      //
+      // accounts.ts and quota.ts used to sit in this list on the same grounds.
+      // They are in the report now: both have direct tests that drive the real
+      // class against mocked I/O, so the "needs an integration harness" reason
+      // no longer holds for them. Keep them in — an exclusion that outlives its
+      // reason is how a number rises while coverage falls.
       exclude: [
         "apps/streamdeck/src/plugin.ts",
         "apps/streamdeck/src/render/rasterize.ts",
@@ -68,9 +73,7 @@ export default defineConfig({
         "apps/streamdeck/src/actions/activeModel.ts",
         "apps/streamdeck/src/actions/switchAccount.ts",
         "apps/streamdeck/src/actions/loginLogout.ts",
-        "packages/core/src/accounts.ts",
         "packages/core/src/activeSession.ts",
-        "packages/core/src/quota.ts",
         "packages/core/src/index.ts",
         "**/*.test.ts",
         "**/__snapshots__/**",

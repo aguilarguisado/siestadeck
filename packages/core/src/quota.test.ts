@@ -40,9 +40,10 @@ function makeAccountsMock(): AccountsMock {
 const { idleMock } = vi.hoisted(() => ({ idleMock: vi.fn() }));
 vi.mock("./idle.js", () => ({ isClaudeIdle: idleMock }));
 
-vi.mock("./keychain.js", () => ({
-  readClaudeCredentials: vi.fn().mockRejectedValue(new Error("no live creds")),
+const { readClaudeCredentialsMock } = vi.hoisted(() => ({
+  readClaudeCredentialsMock: vi.fn(),
 }));
+vi.mock("./keychain.js", () => ({ readClaudeCredentials: readClaudeCredentialsMock }));
 
 const { QuotaRegistry } = await import("./quota.js");
 
@@ -66,6 +67,9 @@ beforeEach(() => {
   accountsMock = makeAccountsMock();
   accountsBox.current = accountsMock;
   idleMock.mockReset().mockResolvedValue(false);
+  // Default: nobody is logged in to Claude Code, so the synthetic bootstrap
+  // account has no token to offer. Tests that care override it.
+  readClaudeCredentialsMock.mockReset().mockRejectedValue(new Error("no live creds"));
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
 });
@@ -274,6 +278,234 @@ describe("non-auth, non-rate errors", () => {
     // A 5xx must not park the account: the next press goes straight out.
     vi.setSystemTime(Date.now() + 10_000);
     fetchMock.mockResolvedValueOnce(okResponse());
+    await reg.refresh("ada");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Everything below covers the surface the backoff tests above don't reach:
+// lifecycle (start/stop/sync), the auto-refresh timers, and the guard clauses
+// that make refresh() a no-op. Same rule as above — assert through the public
+// surface, never the private per-account state.
+// ---------------------------------------------------------------------------
+
+describe("snapshotFor", () => {
+  it("returns undefined until something has been fetched, then the cached snapshot", async () => {
+    const reg = new QuotaRegistry();
+    reg.start();
+    expect(reg.snapshotFor("ada")).toBeUndefined();
+
+    fetchMock.mockResolvedValueOnce(okResponse());
+    await reg.refresh("ada");
+    expect(reg.snapshotFor("ada")?.slug).toBe("ada");
+  });
+
+  it("aliases the active account to slug=null so subscribers can tell the two apart", async () => {
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValueOnce(okResponse());
+    await reg.refresh("ada");
+
+    // Same underlying data, but the active alias is marked as such.
+    expect(reg.snapshotFor("ada")?.slug).toBe("ada");
+    expect(reg.snapshotFor(null)?.slug).toBeNull();
+  });
+
+  it("returns undefined for an unknown slug, and when no account is active", () => {
+    const reg = new QuotaRegistry();
+    reg.start();
+    expect(reg.snapshotFor("nobody")).toBeUndefined();
+
+    Object.defineProperty(accountsMock, "activeSlug", { configurable: true, get: () => null });
+    expect(reg.snapshotFor(null)).toBeUndefined();
+  });
+});
+
+describe("refresh guards", () => {
+  it("does nothing when there is no account to refresh", async () => {
+    const reg = new QuotaRegistry();
+    reg.start();
+
+    expect(await reg.refresh("nobody")).toBeUndefined();
+    Object.defineProperty(accountsMock, "activeSlug", { configurable: true, get: () => null });
+    expect(await reg.refresh()).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("coalesces a concurrent refresh into the one already in flight", async () => {
+    const reg = new QuotaRegistry();
+    reg.start();
+    let release!: (v: unknown) => void;
+    fetchMock.mockReturnValueOnce(new Promise((r) => (release = r)));
+
+    const first = reg.refresh("ada");
+    const second = reg.refresh("ada"); // lands while the first is suspended
+    release(okResponse());
+    await Promise.all([first, second]);
+
+    // The point: one request, not two.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the active account when no slug is given", async () => {
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValueOnce(okResponse());
+    expect((await reg.refresh())?.slug).toBe("ada");
+  });
+
+  it("publishes the message when the token source itself throws", async () => {
+    const reg = new QuotaRegistry();
+    reg.start();
+    const seen = captureSnapshots(reg);
+    accountsMock.getAccessToken.mockResolvedValueOnce(null); // → "No stored token"
+
+    await reg.refresh("ada");
+
+    expect(String(seen.at(-1)!.error)).toMatch(/No stored token/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("sync() against the account list", () => {
+  it("drops accounts that are gone and picks up ones that appeared", async () => {
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValueOnce(okResponse());
+    await reg.refresh("ada");
+    expect(reg.snapshotFor("ada")).toBeDefined();
+
+    accountsMock.list.mockReturnValue([{ slug: "bob", addedAt: "2026-01-02T00:00:00Z" }]);
+    accountsMock.emit("changed");
+
+    // ada's cached snapshot goes with the account; bob is now refreshable.
+    expect(reg.snapshotFor("ada")).toBeUndefined();
+    fetchMock.mockResolvedValueOnce(okResponse());
+    expect((await reg.refresh("bob"))?.slug).toBe("bob");
+  });
+
+  it("falls back to a synthetic account reading the live keychain entry", async () => {
+    // Zero saved accounts but Claude Code is logged in: the tile still has
+    // something to render rather than going blank.
+    accountsMock.list.mockReturnValue([]);
+    const reg = new QuotaRegistry();
+    reg.start();
+
+    readClaudeCredentialsMock.mockResolvedValue({ claudeAiOauth: { accessToken: "live-tok" } });
+    fetchMock.mockResolvedValueOnce(okResponse());
+    expect((await reg.refresh("__bootstrap__"))?.slug).toBe("__bootstrap__");
+    // It read the live keychain entry, not a per-account stash.
+    expect(accountsMock.getAccessToken).not.toHaveBeenCalled();
+  });
+
+  it("does not try to re-credential the synthetic account on a 401", async () => {
+    accountsMock.list.mockReturnValue([]);
+    const reg = new QuotaRegistry();
+    reg.start();
+    const seen = captureSnapshots(reg, "__bootstrap__");
+
+    readClaudeCredentialsMock.mockResolvedValue({ claudeAiOauth: { accessToken: "live-tok" } });
+    fetchMock.mockResolvedValueOnce(errResponse(401));
+    await reg.refresh("__bootstrap__");
+
+    // There is no stashed refresh_token for a slug that isn't a real account.
+    expect(accountsMock.refreshTokenFor).not.toHaveBeenCalled();
+    expect(String(seen.at(-1)!.error)).toMatch(/auth expired/);
+  });
+});
+
+describe("auto-refresh timers", () => {
+  it("clamps the cadence, fires on the interval, and skips the tick while Claude is idle", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+
+    // Asked for 1s; the floor is 5min, so nothing fires at 1s.
+    reg.enableAutoRefresh("ada", 1_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fetchMock.mockResolvedValue(okResponse());
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Claude Code has gone quiet: the tick still re-arms but spends no request.
+    idleMock.mockResolvedValue(true);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // And it recovers when Claude is active again, proving the re-arm happened.
+    idleMock.mockResolvedValue(false);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("suspends and resumes on the remembered interval", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+    reg.enableAutoRefresh("ada", 5 * 60_000);
+
+    reg.suspendAuto();
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // resumeAuto takes no interval argument — the state remembers it.
+    reg.resumeAuto();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops the timer when passed 0, and ignores accounts that do not exist", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+    reg.enableAutoRefresh("ada", 5 * 60_000);
+    reg.enableAutoRefresh("ada", 0);
+
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // Neither of these should throw.
+    reg.enableAutoRefresh("nobody", 5 * 60_000);
+    Object.defineProperty(accountsMock, "activeSlug", { configurable: true, get: () => null });
+    reg.enableAutoRefresh(null, 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("stop() clears the timers and forgets every account", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+    reg.enableAutoRefresh("ada", 5 * 60_000);
+
+    reg.stop();
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(reg.snapshotFor("ada")).toBeUndefined();
+  });
+});
+
+describe("markAwake", () => {
+  it("clears the coalesce window without fetching anything", async () => {
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+    await reg.refresh("ada");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Inside the 5s floor: suppressed.
+    await reg.refresh("ada");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    reg.markAwake();
+    expect(fetchMock).toHaveBeenCalledTimes(1); // markAwake itself fetches nothing
+
     await reg.refresh("ada");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
