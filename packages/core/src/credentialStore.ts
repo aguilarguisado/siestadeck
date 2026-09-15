@@ -77,28 +77,36 @@ export const macStore: CredentialStore = {
 // PowerShell spawn cost (~150-300ms each) is amortized by a per-process cache
 // stamped with the backing file's identity.
 //
-// The stamp is what makes the cache safe to share a machine with a second
-// siesta app. Caching by key alone was a per-process cache of a file another
-// process rewrites: app A hits a 401, redeems the single-use refresh_token and
-// writes a new stash; app B keeps returning the old blob forever, redeems an
-// already-spent refresh token, earns a 400 and parks itself in a 30-minute auth
-// backoff pinned to that dead token. The user logs in again, B re-reads its own
-// cache, sees the same dead token, `shouldClearAuthBackoff` stays false, and
-// the LOG IN tile never clears. One fs.stat per read buys that back; the
-// expensive part was always the PowerShell spawn, which the stat still avoids.
+// Validating that cache against the file is what makes it safe to share a
+// machine with a second siesta app. Caching by key alone was a per-process
+// cache of a file another process rewrites: app A hits a 401, redeems the
+// single-use refresh_token and writes a new stash; app B keeps returning the
+// old blob forever, redeems an already-spent refresh token, earns a 400 and
+// parks itself in a 30-minute auth backoff pinned to that dead token. The user
+// logs in again, B re-reads its own cache, sees the same dead token,
+// `shouldClearAuthBackoff` stays false, and the LOG IN tile never clears. One
+// fs.readFile per read buys that back; the expensive part was always the
+// PowerShell spawn, which reading the bytes still avoids.
 
 const PS_TIMEOUT_MS = 5_000;
 
-type DpapiEntry = { stamp: string; plain: string };
+type DpapiEntry = { hash: string; plain: string };
 const dpapiCache = new Map<string, DpapiEntry>();
 
 /**
- * Identity of the blob on disk. `size` rides along with `mtimeMs` because
- * filesystem timestamp granularity is coarse enough that two writes can land in
- * the same tick, and a changed-length blob is the common case when they do.
+ * Identity of a blob, taken from the bytes themselves.
+ *
+ * An mtime+size stamp is cheaper to obtain but cannot be taken safely on the
+ * write path: between our `writeFile` and a `stat` of what we wrote, a second
+ * app can replace the file, and we would cache *our* plaintext under *their*
+ * stamp — an entry that matches on every subsequent read and therefore never
+ * re-decrypts. That is the stale-credential failure above, reintroduced by the
+ * very code meant to prevent it. Hashing the ciphertext we already hold has no
+ * such window: the identity comes from the bytes, not from a second filesystem
+ * observation that can race with another writer.
  */
-function stampOf(stat: { mtimeMs: number; size: number }): string {
-  return `${stat.mtimeMs}:${stat.size}`;
+function hashOf(cipher: Buffer): string {
+  return createHash("sha1").update(cipher).digest("hex");
 }
 
 function credKey(service: string, account?: string): string {
@@ -186,9 +194,9 @@ export const winStore: CredentialStore = {
   async read(service: string, account?: string): Promise<string> {
     const key = credKey(service, account);
     const file = credPath(service, account);
-    let stamp: string;
+    let cipher: Buffer;
     try {
-      stamp = stampOf(await fs.stat(file));
+      cipher = await fs.readFile(file);
     } catch (err) {
       // No file (or unreadable): drop any entry rather than leave a blob that
       // outlives the credential it came from, and surface the error exactly as
@@ -196,15 +204,13 @@ export const winStore: CredentialStore = {
       dpapiCache.delete(key);
       throw err;
     }
+    // Hashed from the bytes we are about to decrypt, so the entry describes
+    // exactly the blob it came from no matter who wrote the file when.
+    const hash = hashOf(cipher);
     const cached = dpapiCache.get(key);
-    if (cached?.stamp === stamp) return cached.plain;
-    const cipher = await fs.readFile(file);
+    if (cached?.hash === hash) return cached.plain;
     const plain = await dpapiUnprotect(cipher);
-    // Stamped with the mtime observed *before* the read: if a writer replaced
-    // the file in between, we cached the new bytes under the old stamp, so the
-    // next read re-decrypts. Conservative in the safe direction — an extra
-    // spawn, never a stale credential.
-    dpapiCache.set(key, { stamp, plain });
+    dpapiCache.set(key, { hash, plain });
     return plain;
   },
   async write(service: string, account: string, password: string): Promise<void> {
@@ -212,15 +218,12 @@ export const winStore: CredentialStore = {
     await fs.mkdir(winCredsDir, { recursive: true });
     const file = credPath(service, account);
     await fs.writeFile(file, cipher);
-    const key = credKey(service, account);
-    // Stamp from the file we just wrote so this process keeps its own
-    // amortization. An unstamped entry could never be trusted on the next read,
-    // which would spend a PowerShell spawn to re-learn what we already know.
-    try {
-      dpapiCache.set(key, { stamp: stampOf(await fs.stat(file)), plain: password });
-    } catch {
-      dpapiCache.delete(key); // couldn't stamp it — better no entry than a wrong one
-    }
+    // Keyed on the ciphertext we just wrote, so this process keeps its own
+    // amortization rather than paying a spawn to re-learn its own secret.
+    // Deliberately not a stat of the file: see hashOf. If another app
+    // overwrites the blob after this, its bytes hash differently and the next
+    // read re-decrypts.
+    dpapiCache.set(credKey(service, account), { hash: hashOf(cipher), plain: password });
   },
 };
 
