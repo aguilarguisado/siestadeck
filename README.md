@@ -44,9 +44,11 @@ If you'd rather build it yourself (or want to hack on it):
 git clone https://github.com/aguilarguisado/siestadeck.git siestadeck && cd siestadeck
 npm install
 npm run icons      # rasterize SVGs → manifest PNGs
-npm run build      # bundle plugin.js into io.github.aguilarguisado.siestadeck.sdPlugin/bin/
+npm run build      # bundle plugin.js into the .sdPlugin/bin/ directory
 npm run link       # symlink the plugin into Stream Deck
 ```
+
+All commands run from the repo root — it's an npm-workspaces monorepo, and the build scripts delegate to the `@siesta/streamdeck` workspace.
 
 Open Stream Deck — the siestadeck actions appear in the right sidebar under their own category.
 
@@ -136,19 +138,28 @@ siestadeck deliberately does **not** ship a guessed-from-tokens cost estimate. F
 
 ## Repo layout
 
+siestadeck is one app in an npm-workspaces monorepo. Everything that isn't UI — quota polling, credential handling, the account registry, session tailing — lives in `@siesta/core`, so a future desktop app can reuse it without a Stream Deck attached.
+
 ```
-src/
-  actions/         one TS file per Stream Deck action
-    draw/          pure, testable render cores for each action
-  services/        quota poller, active-session watcher, accounts, keychain, terminal
-  render/          SVG templates + theme tokens
-io.github.aguilarguisado.siestadeck.sdPlugin/
-  manifest.json    Stream Deck plugin manifest
-  bin/             rollup output (gitignored)
-  imgs/            rasterized PNG assets (built from assets/icons/*.svg, gitignored)
-  pi/              Property Inspector HTML
-assets/icons/      hand-authored SVG glyphs (source of truth for action icons)
-scripts/           one-off Node utilities (icon rasterizer, release-readiness check)
+packages/core/       @siesta/core — no UI dependencies of any kind
+  src/               quota poller, active-session watcher, accounts, keychain, terminal
+                     *Policy.ts siblings hold the pure, heavily-tested logic
+  src/log.ts         the one host seam: the app binds a log sink at startup
+
+apps/streamdeck/     @siesta/streamdeck — this plugin
+  src/actions/       one TS file per Stream Deck action
+    draw/            pure, testable render cores for each action
+  src/render/        SVG templates + theme tokens
+  src/plugin.ts      entry point: binds the log sink, registers actions
+  assets/icons/      hand-authored SVG glyphs (source of truth for action icons)
+  scripts/           Node utilities (icon rasterizer, release-readiness check)
+  io.github.aguilarguisado.siestadeck.sdPlugin/
+    manifest.json    Stream Deck plugin manifest
+    bin/             rollup output (gitignored)
+    imgs/            rasterized PNGs (built from assets/icons/*.svg, gitignored)
+    pi/              Property Inspector HTML
+
+assets/              brand assets (logo, screenshots)
 ```
 
 ## Contributing

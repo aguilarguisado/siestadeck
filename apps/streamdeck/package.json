@@ -1,0 +1,30 @@
+{
+  "name": "@siesta/streamdeck",
+  "version": "0.1.0",
+  "description": "Time to siesta. Live Claude Code quota, spend, and multi-account control on your Elgato Stream Deck.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "icons": "node scripts/build-icons.mjs",
+    "prebuild": "npm run icons",
+    "build": "rollup -c",
+    "watch": "rollup -c -w --watch.onEnd=\"streamdeck restart io.github.aguilarguisado.siestadeck\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "validate": "streamdeck validate io.github.aguilarguisado.siestadeck.sdPlugin",
+    "link": "streamdeck link io.github.aguilarguisado.siestadeck.sdPlugin",
+    "restart": "streamdeck restart io.github.aguilarguisado.siestadeck",
+    "check:release": "node scripts/check-release-readiness.mjs",
+    "prepack": "npm run check:release",
+    "pack": "streamdeck pack io.github.aguilarguisado.siestadeck.sdPlugin",
+    "pack:force": "streamdeck pack io.github.aguilarguisado.siestadeck.sdPlugin --force"
+  },
+  "dependencies": {
+    "@elgato/streamdeck": "^2.1.0",
+    "@resvg/resvg-wasm": "^2.6.2",
+    "@siesta/core": "*"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

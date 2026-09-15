@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    // Rollup compiles core as part of the app's program; tsc here is a pure
+    // type gate — and unlike `rollup -c`, it exits non-zero on a type error.
+    // `noEmit` also means no common-source-directory computation, so neither
+    // TS5011 nor TS6059 can fire.
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"],
+  // Test files are excluded to match what the build has always checked. They
+  // carry pre-existing type errors (vitest mock typings) that no gate has ever
+  // seen; including them is a separate cleanup, not part of the extraction.
+  "exclude": ["src/**/*.test.ts"]
+}

@@ -31,10 +31,10 @@ Please include:
 
 siestadeck handles sensitive material — Anthropic OAuth tokens, account metadata, and shells out to OS-level tooling. Security-relevant areas of the codebase include:
 
-- **Credential storage** — `src/services/keychain.ts`, `src/services/accounts.ts`. Reads/writes macOS Keychain entries; never logs token contents.
-- **OAuth requests** — `src/services/quota.ts`. Sends bearer-authenticated `GET` requests to `https://api.anthropic.com/api/oauth/usage`; no other endpoints are contacted.
-- **Shell-out** — `src/services/terminal.ts`. Uses `osascript` to launch Terminal.app for OAuth login/logout. No untrusted input is interpolated into the script.
-- **Local file reads** — `src/services/activeSession.ts`. Read-only access to `~/.claude/` JSONL session transcripts.
+- **Credential storage** — `packages/core/src/keychain.ts`, `packages/core/src/accounts.ts`. Reads/writes macOS Keychain entries; never logs token contents.
+- **OAuth requests** — `packages/core/src/quota.ts`. Sends bearer-authenticated `GET` requests to `https://api.anthropic.com/api/oauth/usage`; no other endpoints are contacted.
+- **Shell-out** — `packages/core/src/terminal.ts`. Uses `osascript` to launch Terminal.app for OAuth login/logout. No untrusted input is interpolated into the script.
+- **Local file reads** — `packages/core/src/activeSession.ts`. Read-only access to `~/.claude/` JSONL session transcripts.
 
 If you find that any of these surfaces leak secrets, accept unsafe input, or interact with unexpected network or filesystem locations, that is in scope.
 

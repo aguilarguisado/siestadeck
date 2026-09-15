@@ -29,20 +29,31 @@ jobs:
       - name: Tests + coverage
         run: npm run coverage
 
+      - name: Type-check (covers the test files the rollup gate can't see)
+        run: npm run typecheck
+
+      - name: Assert core stays UI-agnostic
+        run: |
+          if grep -rq "@elgato" packages/core/src; then
+            echo "::error::packages/core imports @elgato — the core must not depend on the Stream Deck SDK."
+            exit 1
+          fi
+        shell: bash
+
       - name: Build icons + bundle
         run: npm run build
 
       - name: Validate manifest
-        run: npx streamdeck validate io.github.aguilarguisado.siestadeck.sdPlugin
+        run: npm run validate
 
       - name: Pack plugin
         if: matrix.os == 'macos-latest'
-        run: npx streamdeck pack io.github.aguilarguisado.siestadeck.sdPlugin --force
+        run: npm run pack:force
 
       - name: Upload artifact
         if: matrix.os == 'macos-latest'
         uses: actions/upload-artifact@v4
         with:
           name: siestadeck-plugin
-          path: io.github.aguilarguisado.siestadeck.streamDeckPlugin
+          path: apps/streamdeck/io.github.aguilarguisado.siestadeck.streamDeckPlugin
           retention-days: 14
