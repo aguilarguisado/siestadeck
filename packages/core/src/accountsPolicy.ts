@@ -207,6 +207,50 @@ export function colorForIndex(idx: number): string {
 /** The fields ordering needs; `Account` in accounts.ts satisfies it. */
 export type Orderable = { slug: string; addedAt: string };
 
+/** The shape `registryFingerprint` reads. `Registry` in accounts.ts satisfies it. */
+export type Fingerprintable = { accounts: unknown; activeSlug: string | null };
+
+/**
+ * A value-equality stamp for the account registry: two documents with the same
+ * fingerprint are indistinguishable to every consumer of this package.
+ *
+ * Used for two things, both of which turn on "did this document really change?":
+ * skipping a no-op write (which would otherwise widen the window in which a
+ * second app's update can be lost), and suppressing a no-op `"changed"` emit
+ * from `reload()`. The second is not cosmetic — `QuotaRegistry` answers
+ * `"changed"` by clearing auth backoffs and firing a network refresh, so a
+ * spurious emit costs a real API call.
+ *
+ * Three deliberate choices:
+ *
+ *  - **Field-enumerating, not `JSON.stringify(reg)`.** Key order is an accident
+ *    of how a document was built — parsed from disk in one app, constructed from
+ *    a literal in another — and must not read as a change. Nested arrays rather
+ *    than objects so `JSON.stringify` still does the escaping.
+ *  - **Array order is significant; do NOT sort with `stableOrder` first.**
+ *    `reconcilePaletteColors` assigns `color` by array position, so a pure
+ *    reorder genuinely changes what the registry will do next.
+ *  - **Tolerates a malformed document.** Nothing validates `accounts.json` on
+ *    the way in — `readJsonOr` returns whatever parsed — and this is now the
+ *    first thing to touch every document on every path.
+ */
+export function registryFingerprint(reg: Fingerprintable): string {
+  const rows = Array.isArray(reg.accounts) ? reg.accounts : [];
+  return JSON.stringify([
+    reg.activeSlug ?? null,
+    rows.map((a: Partial<Record<string, unknown>>) => [
+      a?.slug ?? null,
+      a?.displayName ?? null,
+      a?.email ?? null,
+      a?.tier ?? null,
+      a?.rateLimitTier ?? null,
+      a?.color ?? null,
+      a?.addedAt ?? null,
+      a?.lastUsedAt ?? null,
+    ]),
+  ]);
+}
+
 /**
  * Presentation and cycle order: oldest account first, by `addedAt` (ISO-8601
  * strings sort chronologically), tie-broken by slug.

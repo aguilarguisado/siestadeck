@@ -8,6 +8,7 @@ import {
   liveOutranksStash,
   pickNextSlug,
   preferLiveOverStash,
+  registryFingerprint,
   sameEmail,
   SOFT_ACCOUNT_LIMIT,
   stableOrder,
@@ -346,5 +347,91 @@ describe("account palette", () => {
     expect(colorForIndex(0)).toBe(ACCOUNT_PALETTE[0]);
     expect(colorForIndex(SOFT_ACCOUNT_LIMIT)).toBe(ACCOUNT_PALETTE[0]);
     expect(colorForIndex(SOFT_ACCOUNT_LIMIT + 3)).toBe(ACCOUNT_PALETTE[3]);
+  });
+});
+
+describe("registryFingerprint", () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    slug: "ada",
+    displayName: "Ada",
+    email: "ada@example.com",
+    tier: "max",
+    rateLimitTier: "default",
+    color: "#D0776C",
+    addedAt: "2026-01-01T00:00:00Z",
+    lastUsedAt: "2026-01-01T00:00:00Z",
+    ...over,
+  });
+
+  it("ignores key order, so a document parsed from disk matches one built here", () => {
+    // The whole point: reload() compares a document another app wrote against a
+    // graph this process constructed. Key order is an accident of how each was
+    // built — and a sibling app on a different build may well write its keys in
+    // another order — so it must not read as a change.
+    const built = { accounts: [row()], activeSlug: "ada" };
+    const reversed = Object.fromEntries(Object.entries(row()).reverse());
+    expect(Object.keys(reversed)).not.toEqual(Object.keys(row())); // guard the guard
+    expect(registryFingerprint({ accounts: [reversed], activeSlug: "ada" })).toBe(
+      registryFingerprint(built),
+    );
+  });
+
+  it("ignores fields a newer sibling app added that this build doesn't know", () => {
+    // writeRegistry round-trips the parsed document, so unknown fields survive.
+    // They must not make every reload() look like a change.
+    const base = { accounts: [row()], activeSlug: "ada" };
+    const extended = { accounts: [row({ favouriteColour: "blue" })], activeSlug: "ada" };
+    expect(registryFingerprint(extended)).toBe(registryFingerprint(base));
+  });
+
+  it("notices a lastUsedAt change — a swap to the already-active account moves nothing else", () => {
+    // If lastUsedAt were left out of the stamp, that swap would fingerprint as
+    // unchanged and silently fail to persist.
+    const before = { accounts: [row()], activeSlug: "ada" };
+    const after = { accounts: [row({ lastUsedAt: "2026-06-01T00:00:00Z" })], activeSlug: "ada" };
+    expect(registryFingerprint(after)).not.toBe(registryFingerprint(before));
+  });
+
+  it("notices every field that is written back to disk", () => {
+    const base = { accounts: [row()], activeSlug: "ada" };
+    for (const [field, value] of Object.entries({
+      slug: "ada-2",
+      displayName: "Ada L",
+      email: "ada@other.com",
+      tier: "pro",
+      rateLimitTier: "high",
+      color: "#F2C744",
+      addedAt: "2027-01-01T00:00:00Z",
+    })) {
+      const changed = { accounts: [row({ [field]: value })], activeSlug: "ada" };
+      expect(registryFingerprint(changed), field).not.toBe(registryFingerprint(base));
+    }
+  });
+
+  it("notices a selection change", () => {
+    const a = { accounts: [row()], activeSlug: "ada" };
+    const b = { accounts: [row()], activeSlug: null };
+    expect(registryFingerprint(a)).not.toBe(registryFingerprint(b));
+  });
+
+  it("treats a reorder as a change, because colors are assigned by position", () => {
+    // reconcilePaletteColors repaints by array index, so a pure reorder really
+    // does change what the registry will do next. Do NOT sort before stamping.
+    const ada = row({ slug: "ada" });
+    const bob = row({ slug: "bob" });
+    const one = { accounts: [ada, bob], activeSlug: null };
+    const two = { accounts: [bob, ada], activeSlug: null };
+    expect(registryFingerprint(one)).not.toBe(registryFingerprint(two));
+  });
+
+  it("survives a malformed document instead of throwing", () => {
+    // readJsonOr does no validation, and this helper is now the first thing to
+    // touch every document on every path — including a hand-edited one.
+    expect(() => registryFingerprint({ accounts: null, activeSlug: null })).not.toThrow();
+    expect(() => registryFingerprint({ accounts: [null], activeSlug: null })).not.toThrow();
+    expect(() => registryFingerprint({ accounts: "nope", activeSlug: null })).not.toThrow();
+    expect(registryFingerprint({ accounts: null, activeSlug: null })).toBe(
+      registryFingerprint({ accounts: [], activeSlug: null }),
+    );
   });
 });
