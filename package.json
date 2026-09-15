@@ -1,22 +1,27 @@
 {
-  "name": "siestadeck",
+  "name": "siesta",
   "version": "0.1.0",
-  "description": "Time to siesta. Live Claude Code quota, spend, and multi-account control on your Elgato Stream Deck.",
+  "private": true,
+  "description": "Time to siesta. Live Claude Code quota, spend, and multi-account control — on your Elgato Stream Deck, and on your desktop.",
   "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "icons": "node scripts/build-icons.mjs",
-    "prebuild": "npm run icons",
-    "build": "rollup -c",
-    "watch": "rollup -c -w --watch.onEnd=\"streamdeck restart io.github.aguilarguisado.siestadeck\"",
-    "validate": "streamdeck validate io.github.aguilarguisado.siestadeck.sdPlugin",
-    "link": "streamdeck link io.github.aguilarguisado.siestadeck.sdPlugin",
-    "restart": "streamdeck restart io.github.aguilarguisado.siestadeck",
+    "icons": "npm run icons -w @siesta/streamdeck",
+    "build": "npm run build -w @siesta/streamdeck",
+    "watch": "npm run watch -w @siesta/streamdeck",
+    "validate": "npm run validate -w @siesta/streamdeck",
+    "link": "npm run link -w @siesta/streamdeck",
+    "restart": "npm run restart -w @siesta/streamdeck",
+    "pack": "npm run pack -w @siesta/streamdeck",
+    "pack:force": "npm run pack:force -w @siesta/streamdeck",
+    "check:release": "npm run check:release -w @siesta/streamdeck",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "test:watch": "vitest",
-    "coverage": "vitest run --coverage",
-    "check:release": "node scripts/check-release-readiness.mjs",
-    "prepack": "npm run check:release",
-    "pack": "streamdeck pack io.github.aguilarguisado.siestadeck.sdPlugin"
+    "coverage": "vitest run --coverage"
   },
   "license": "MIT",
   "author": {
@@ -44,10 +49,6 @@
   ],
   "engines": {
     "node": ">=20"
-  },
-  "dependencies": {
-    "@elgato/streamdeck": "^2.1.0",
-    "@resvg/resvg-wasm": "^2.6.2"
   },
   "devDependencies": {
     "@elgato/cli": "^1.7.4",

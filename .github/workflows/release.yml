@@ -27,11 +27,11 @@ jobs:
       - name: Build, validate, pack
         run: |
           npm run build
-          npx streamdeck validate io.github.aguilarguisado.siestadeck.sdPlugin
-          npx streamdeck pack io.github.aguilarguisado.siestadeck.sdPlugin --force
+          npm run validate
+          npm run pack:force
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: io.github.aguilarguisado.siestadeck.streamDeckPlugin
+          files: apps/streamdeck/io.github.aguilarguisado.siestadeck.streamDeckPlugin
           generate_release_notes: true

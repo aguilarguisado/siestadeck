@@ -1,13 +1,17 @@
 node_modules/
-io.github.aguilarguisado.siestadeck.sdPlugin/bin/
-io.github.aguilarguisado.siestadeck.sdPlugin/logs/
+
+# `**/` prefix is load-bearing: a pattern containing a mid-string `/` is
+# anchored to the repo root, so the un-prefixed form stopped matching once the
+# plugin moved under apps/streamdeck/.
+**/io.github.aguilarguisado.siestadeck.sdPlugin/bin/
+**/io.github.aguilarguisado.siestadeck.sdPlugin/logs/
 *.streamDeckPlugin
 .DS_Store
 .vscode/
 *.log
 
-# Built PNGs are regenerated from assets/icons/*.svg via `npm run icons`.
-io.github.aguilarguisado.siestadeck.sdPlugin/imgs/
+# Built PNGs are regenerated from apps/streamdeck/assets/icons/*.svg via `npm run icons`.
+**/io.github.aguilarguisado.siestadeck.sdPlugin/imgs/
 
 # Test coverage output
 coverage/

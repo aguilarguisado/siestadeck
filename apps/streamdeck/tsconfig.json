@@ -1,0 +1,26 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // MUST be the repo root, and MUST be explicit.
+    //
+    // `@rollup/plugin-typescript` derives its internal file filter from
+    // `rootDir`. Files outside it fail the filter, its `load()` hook returns
+    // null, and Rollup falls back to reading the raw `.ts` off disk — dying
+    // with a *parse* error that names a core file and mentions nothing about
+    // rootDir. Widening to the repo root is what lets packages/core/src/**
+    // through the same TypeScript program as the app's own sources, which is
+    // what keeps `rollup -c` a type gate over BOTH packages.
+    //
+    // Deleting it is not an option either: with `outDir` set and no explicit
+    // `rootDir`, TS 6 errors with TS5011 instead of inferring one.
+    "rootDir": "../..",
+    "outDir": "io.github.aguilarguisado.siestadeck.sdPlugin/bin",
+    // No `baseUrl` — deprecated in TS 6 (TS5101). Relative `paths` resolve
+    // against this file's directory.
+    "paths": {
+      "@siesta/core": ["../../packages/core/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["src/**/*.test.ts", "src/**/__snapshots__/**"]
+}
