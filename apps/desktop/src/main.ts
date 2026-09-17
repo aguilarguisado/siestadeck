@@ -208,7 +208,7 @@ app.dock?.hide();
 // no windows if one is ever added.
 app.on("window-all-closed", () => {});
 
-app.whenReady().then(async () => {
+async function start(): Promise<void> {
   tray = new Tray(trayImage());
   tray.setToolTip("siesta — Claude Code quota");
   tray.setTitle(lastTitle, { fontType: "monospacedDigit" });
@@ -255,4 +255,19 @@ app.whenReady().then(async () => {
   renderTray();
   log.info(`ready — ${accountsService.list().length} account(s), active ${accountsService.activeSlug ?? "none"}`);
   void quotaRegistry.refresh();
-});
+}
+
+// A menu bar app has to be a singleton. A second copy is not a second window
+// the user can close — it is a second status item showing the same number with
+// no way to tell them apart, a second auto-refresh timer against the same rate
+// limit, and a second writer to the account registry. `npm run desktop` twice
+// is enough to get there.
+//
+// The lock is keyed on the app name, so this must come after setName(). macOS
+// releases it when the holder exits, including on a crash.
+if (app.requestSingleInstanceLock()) {
+  void app.whenReady().then(start);
+} else {
+  log.warn("another instance is already running — exiting");
+  app.quit();
+}
