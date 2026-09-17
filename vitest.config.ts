@@ -36,19 +36,27 @@ export default defineConfig({
         extends: true,
         test: { name: "streamdeck", include: ["apps/streamdeck/src/**/*.test.ts"] },
       },
+      {
+        extends: true,
+        test: { name: "desktop", include: ["apps/desktop/src/**/*.test.ts"] },
+      },
     ],
 
     // `coverage` is a root-only option in Vitest 4, so this is one aggregated
-    // report and one threshold across both projects.
+    // report and one threshold across every project.
     coverage: {
       provider: "v8",
       reporter: ["text", "html", "json-summary"],
-      // Must name both packages explicitly. A bare "src/**/*.ts" would still
+      // Must name every package explicitly. A bare "src/**/*.ts" would still
       // appear to work — per-file reports match by substring — but the
       // untested-file sweep globs from the repo root, so every zero-coverage
       // file would silently drop out of the report and the percentage would
       // RISE while real coverage fell.
-      include: ["apps/streamdeck/src/**/*.ts", "packages/core/src/**/*.ts"],
+      include: [
+        "apps/streamdeck/src/**/*.ts",
+        "apps/desktop/src/**/*.ts",
+        "packages/core/src/**/*.ts",
+      ],
       // Excluded from coverage gates:
       // - plugin.ts: top-level bootstrap, exercised at runtime by Stream Deck.
       // - rasterize.ts: wasm + native font I/O; needs an integration test.
@@ -59,6 +67,12 @@ export default defineConfig({
       // - activeSession.ts: wraps fs watching; its pure core lives in
       //   activeSessionPolicy.ts and is covered there. No direct tests yet.
       // - index.ts: the @siesta/core barrel, pure re-exports with no logic.
+      // - desktop/main.ts: top-level Electron bootstrap. Tray, Menu and
+      //   powerMonitor wiring that can only run inside a live main process.
+      //   It is the ONLY desktop file that may sit here — every decision about
+      //   what the menu says lives in menuModel.ts / format.ts, which are
+      //   covered directly. A second desktop exclusion means logic has leaked
+      //   into the glue; move it, don't list it.
       //
       // accounts.ts and quota.ts used to sit in this list on the same grounds.
       // They are in the report now: both have direct tests that drive the real
@@ -73,6 +87,7 @@ export default defineConfig({
         "apps/streamdeck/src/actions/activeModel.ts",
         "apps/streamdeck/src/actions/switchAccount.ts",
         "apps/streamdeck/src/actions/loginLogout.ts",
+        "apps/desktop/src/main.ts",
         "packages/core/src/activeSession.ts",
         "packages/core/src/index.ts",
         "**/*.test.ts",

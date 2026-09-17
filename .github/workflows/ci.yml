@@ -24,6 +24,14 @@ jobs:
           node-version: 22
           cache: npm
 
+      # Note: electron's postinstall pulls its ~100MB binary on both legs, even
+      # though CI only bundles the menu bar app and never launches it. Electron
+      # 44 has no supported opt-out — ELECTRON_SKIP_BINARY_DOWNLOAD went away
+      # with the old electron-download installer, and @electron/get only exposes
+      # mirror and cache-root controls. `cache: npm` above does not cover it
+      # either: the binary lands in electron's own cache, not ~/.npm. If this
+      # ever costs real minutes, cache `~/Library/Caches/electron` and
+      # `%LOCALAPPDATA%\electron\Cache` explicitly.
       - run: npm ci
 
       - name: Tests + coverage
@@ -34,8 +42,8 @@ jobs:
 
       - name: Assert core stays UI-agnostic
         run: |
-          if grep -rq "@elgato" packages/core/src; then
-            echo "::error::packages/core imports @elgato — the core must not depend on the Stream Deck SDK."
+          if grep -rqE "@elgato|electron" packages/core/src; then
+            echo "::error::packages/core references a host SDK — the core must not depend on @elgato/streamdeck or electron."
             exit 1
           fi
         shell: bash
@@ -45,6 +53,12 @@ jobs:
 
       - name: Validate manifest
         run: npm run validate
+
+      # macOS-only: the menu bar app is a macOS product, and gating it here is
+      # what keeps the Windows leg green.
+      - name: Build menu bar app
+        if: matrix.os == 'macos-latest'
+        run: npm run build:desktop
 
       - name: Release readiness check
         if: matrix.os == 'macos-latest'
