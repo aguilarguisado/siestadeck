@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Menu bar glyph: the snooze-gauge from the Stream Deck category icon,
+       simplified for 16px. The dial ticks and the "Z" are dropped — at menu bar
+       size they collapse into noise — leaving the arc, the needle and the hub.
+       Strokes are heavier than the 64px original for the same reason.
+       Uses currentColor so scripts/build-tray-icon.mjs can tint it black for
+       the macOS template image. -->
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 8 46 A 24 24 0 0 1 56 46" stroke-width="5"/>
+    <line x1="32" y1="46" x2="47" y2="31" stroke-width="6"/>
+  </g>
+  <circle cx="32" cy="46" r="5" fill="currentColor"/>
+</svg>

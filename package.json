@@ -18,6 +18,8 @@
     "pack": "npm run pack -w @siesta/streamdeck",
     "pack:force": "npm run pack:force -w @siesta/streamdeck",
     "check:release": "npm run check:release -w @siesta/streamdeck",
+    "desktop": "npm run start -w @siesta/desktop",
+    "build:desktop": "npm run build -w @siesta/desktop",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "test:watch": "vitest",
