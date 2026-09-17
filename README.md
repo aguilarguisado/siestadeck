@@ -68,13 +68,14 @@ Your live 5-hour utilisation sits next to the clock. Click it for the rest:
 Fable · 85% · resets in 2d 3h
 ──────────────────────────────
 Account: work
+Switch to home
 Log in to Claude…
 ──────────────────────────────
 Refresh
 Quit Siesta
 ```
 
-Clicking **Account** switches to the next saved login, exactly like the Switch Account key. Both apps read the same account registry and the same quota, so you can run them together and either one can drive a switch the other picks up — the menu re-reads the registry every time it opens.
+**Switch to …** names the login you'll land on and cycles through every saved account, exactly like the Switch Account key. Both apps read the same account registry and the same quota, so you can run them together and either one can drive a switch the other picks up — the menu re-reads the registry every time it opens.
 
 macOS only, and not packaged as a signed `.app` yet: it runs from source. Everything else about it — the credentials, the polling limits, the privacy story below — is identical to the plugin, because it is the same core.
 

@@ -82,15 +82,25 @@ export function buildMenuModel({ snapshot, accounts, activeSlug, now }: MenuInpu
 
   rows.push({ kind: "separator" });
 
+  // Where you are and where a click would take you are two different facts, so
+  // they get two rows. Collapsing them into one "Account: <name>" button read
+  // as a label — it is a noun phrase sitting directly under three other noun
+  // phrases that genuinely are labels, and nothing in it says it can be clicked.
   const active = accounts.find((a) => a.slug === activeSlug);
+  rows.push({
+    kind: "info",
+    label: `Account: ${active?.displayName ?? (accounts.length === 0 ? "none" : UNKNOWN)}`,
+  });
+
   // null means the click would be a no-op: no accounts, or a single account
   // that is already active. Disabling the row says so before it is pressed.
-  const canSwap = pickNextSlug(accounts, activeSlug) !== null;
+  const nextSlug = pickNextSlug(accounts, activeSlug);
+  const next = nextSlug != null ? accounts.find((a) => a.slug === nextSlug) : undefined;
   rows.push({
     kind: "action",
     id: "swap",
-    label: `Account: ${active?.displayName ?? (accounts.length === 0 ? "none" : UNKNOWN)}`,
-    enabled: canSwap,
+    label: next ? `Switch to ${next.displayName}` : "Switch account",
+    enabled: nextSlug !== null,
   });
   rows.push({ kind: "action", id: "login", label: "Log in to Claude…", enabled: true });
 

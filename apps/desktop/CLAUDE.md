@@ -5,6 +5,19 @@ the clock, and a menu with the 7d and Fable windows, a one-click account swap, l
 refresh. **macOS only** — core and the plugin stay cross-platform, this app does not, so
 there are no `isMac`/`isWindows` branches in here.
 
+**Only one copy runs at a time** (`app.requestSingleInstanceLock()`, which must come after
+`app.setName()` because the lock is keyed on the name). A second copy is not a second window
+the user can close — it is a second status item showing the same number with no way to tell
+them apart, a second auto-refresh timer against the same rate limit, and a second writer to
+the account registry.
+
+## Menu rows say what they do
+
+Where you are and where a click would take you are two separate rows: a greyed
+`Account: <name>` status line, then an enabled `Switch to <next name>`. They were one row at
+first, and it did not read as a button — a noun phrase directly under three other noun
+phrases that genuinely are labels. If you add a row here, check it survives that test.
+
 ## The single most important architectural fact
 
 **The menu is a native `NSMenu`, built by `Menu.buildFromTemplate`.** There is no renderer
