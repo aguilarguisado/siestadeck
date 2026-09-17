@@ -48,9 +48,35 @@ npm run build      # bundle plugin.js into the .sdPlugin/bin/ directory
 npm run link       # symlink the plugin into Stream Deck
 ```
 
-All commands run from the repo root — it's an npm-workspaces monorepo, and the build scripts delegate to the `@siesta/streamdeck` workspace.
+All commands run from the repo root — it's an npm-workspaces monorepo, and the unprefixed build scripts delegate to the `@siesta/streamdeck` workspace.
 
 Open Stream Deck — the siestadeck actions appear in the right sidebar under their own category.
+
+## No Stream Deck? The menu bar app
+
+There's a macOS menu bar version with the same readout, for when the deck isn't there — or isn't yours.
+
+```sh
+npm run desktop
+```
+
+Your live 5-hour utilisation sits next to the clock. Click it for the rest:
+
+```
+5h · 18% · resets in 1h 15m
+7d · 76% · resets in 2d 3h
+Fable · 85% · resets in 2d 3h
+──────────────────────────────
+Account: work
+Log in to Claude…
+──────────────────────────────
+Refresh
+Quit Siesta
+```
+
+Clicking **Account** switches to the next saved login, exactly like the Switch Account key. Both apps read the same account registry and the same quota, so you can run them together and either one can drive a switch the other picks up — the menu re-reads the registry every time it opens.
+
+macOS only, and not packaged as a signed `.app` yet: it runs from source. Everything else about it — the credentials, the polling limits, the privacy story below — is identical to the plugin, because it is the same core.
 
 ## Actions
 
@@ -138,7 +164,7 @@ siestadeck deliberately does **not** ship a guessed-from-tokens cost estimate. F
 
 ## Repo layout
 
-siestadeck is one app in an npm-workspaces monorepo. Everything that isn't UI — quota polling, credential handling, the account registry, session tailing — lives in `@siesta/core`, so a future desktop app can reuse it without a Stream Deck attached.
+siestadeck is one of two apps in an npm-workspaces monorepo. Everything that isn't UI — quota polling, credential handling, the account registry, session tailing — lives in `@siesta/core`, which is why the menu bar app can offer the same readout with no Stream Deck attached.
 
 ```
 packages/core/       @siesta/core — no UI dependencies of any kind
@@ -158,6 +184,15 @@ apps/streamdeck/     @siesta/streamdeck — this plugin
     bin/             rollup output (gitignored)
     imgs/            rasterized PNGs (built from assets/icons/*.svg, gitignored)
     pi/              Property Inspector HTML
+
+apps/desktop/        @siesta/desktop — the macOS menu bar app (macOS only)
+  src/main.ts        entry point: the whole app is Electron's main process —
+                     a native NSMenu, no renderer, no BrowserWindow, no IPC
+  src/menuModel.ts   pure, tested: snapshot + accounts → menu rows
+  src/format.ts      pure, tested: percentages and reset countdowns
+  assets/tray.svg    menu bar glyph (source of truth for the template icon)
+  imgs/              rasterized tray PNGs (gitignored)
+  dist/              rollup output (gitignored)
 
 assets/              brand assets (logo, screenshots)
 ```

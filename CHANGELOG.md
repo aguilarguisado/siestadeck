@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+### Added
+- **A macOS menu bar app, for people without a Stream Deck.** `npm run desktop` puts your live 5h utilisation next to the clock and a native menu behind it: the 5h, 7d and Fable windows with their reset countdowns, the active account with a click to switch, a sign-in item, and refresh. It reads the same accounts and the same quota as the plugin, so the two agree and either can drive a switch the other picks up. Not packaged as a signed `.app` yet — it runs from source.
+
 ### Fixed
 - **The "LOG IN" tile no longer survives the login that fixes it.** After signing in, the Quota Meter could stay stuck asking for a login indefinitely: pressing it reopened Terminal for another `claude auth login` without ever re-reading the credentials, so a successful sign-in changed nothing on the deck and the next press asked again. A press now retries the credentials first and only offers the sign-in flow if that still fails. The 30-minute auth cooldown is also scoped to the token that actually failed, so it is dropped the moment a different credential is on file — whether you signed in through Siesta, through Terminal yourself, or Claude Code rotated its own. A genuine `429` still runs its full course.
 - **Switching accounts no longer revokes the account you switch to.** OAuth refresh tokens are single-use, so once Claude Code had refreshed its own credentials, the copy Siesta had stashed for that account was not merely older — it was retired, and Anthropic rejected it. Swapping wrote that dead copy over a perfectly good live login, which cost you the session and parked the tile on "LOG IN" with nothing left to recover from. A swap now keeps the live credentials when they are provably the same account and outlive the stash. Identity is still confirmed against `/profile`, never assumed, so another account's credentials can never be adopted this way.

@@ -71,15 +71,16 @@ This package is consumed by more than one app, so it must not assume which. CI e
 
 ## Sharing a machine with a second app
 
-The Stream Deck plugin is the only consumer today, but the data it owns is not
-process-local: `accounts.json`, the credential stashes and the Anthropic rate
-limit are all shared the moment `apps/desktop` runs alongside it. What is
-already safe, and what is still deliberately not:
+There are two consumers now — the Stream Deck plugin and the macOS menu bar app
+(`apps/desktop`) — and the data they own is not process-local: `accounts.json`,
+the credential stashes and the Anthropic rate limit are shared whenever both run.
+What is already safe, and what is still deliberately not:
 
 - **Registry writes re-read first.** `mutateRegistry` above. Last-write-wins, not atomic.
 - **The Windows DPAPI cache re-validates against the file.** Entries are keyed by a hash of the ciphertext they came from (`credentialStore.ts`); a stale entry used to mean a spent refresh token, a 30-minute auth backoff and a `LOG IN` tile that never cleared. Deliberately not an mtime+size stamp: the write path cannot observe the file a second time without racing another writer between its own `writeFile` and that observation, which would pair our plaintext with their identity and produce an entry that matches forever. macOS has no such cache.
-- **`reload()` is pull-only — nothing watches `accounts.json`.** The host calls it at the moments it already treats as "we may have missed something": `plugin.ts` does so on wake and device-connect. A watcher is the natural next step and belongs in the PR that needs it.
-- **429 backoff is still per-process, on purpose.** Both apps independently obey the same 1→10min floor, so the worst case is 2× the request rate, self-healing, with nothing corrupted. A shared `quota-cache.json` is the most machinery for the least damage, and defining a file format before a second consumer exists to validate it is backwards. `setBackoff()` / `clearBackoff()` in `quota.ts` are where that would wire in — two functions, not eight assignment sites.
+- **`reload()` is pull-only — nothing watches `accounts.json`.** Each host calls it at the moments it already treats as "we may have missed something": `plugin.ts` on wake and device-connect, `apps/desktop/src/main.ts` on wake and every time the menu is about to open. The menu-open call is why that app has no `tray.setContextMenu()` — a context menu is opened by macOS at the `NSStatusItem` level, which would take away the only hook that runs before it appears. A watcher is still the natural next step and belongs in the PR that needs it.
+- **429 backoff is still per-process, on purpose.** Both apps independently obey the same 1→10min floor, so the worst case is 2× the request rate, self-healing, with nothing corrupted. That 2× is now real rather than hypothetical: the menu bar app auto-refreshes every 15 minutes, matching the plugin's default, and both are idle-gated. A shared `quota-cache.json` is the most machinery for the least damage. `setBackoff()` / `clearBackoff()` in `quota.ts` are where that would wire in — two functions, not eight assignment sites.
+- **`enableAutoRefresh(slug, ms)` binds to the slug it resolved, not to "whichever account is active".** Passing `null` resolves it once, at call time, so the timer keeps polling the account a later `swap()` left behind. Hosts that pass `null` must re-arm on `"changed"` — `apps/desktop/src/main.ts` does. Folding this into the service is a reasonable future change; doing it here would silently alter the plugin's behaviour too.
 - **No locks, no daemon, no leader election.** Every field in play is monotone or idempotent, so a cross-process lock buys almost nothing and adds a stale-holder liveness problem that is strictly worse. A "designated fetcher" process is a daemon wearing a hat.
 
 Still per-process and unexamined: `activeSession.ts`'s file watching (two apps
