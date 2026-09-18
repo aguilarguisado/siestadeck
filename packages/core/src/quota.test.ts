@@ -469,12 +469,182 @@ describe("auto-refresh timers", () => {
     await vi.advanceTimersByTimeAsync(20 * 60_000);
     expect(fetchMock).not.toHaveBeenCalled();
 
-    // Neither of these should throw.
+    // Should not throw.
     reg.enableAutoRefresh("nobody", 5 * 60_000);
-    Object.defineProperty(accountsMock, "activeSlug", { configurable: true, get: () => null });
-    reg.enableAutoRefresh(null, 5 * 60_000);
     await vi.advanceTimersByTimeAsync(20 * 60_000);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("suspend wins over a request that arrives while no UI is watching", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+
+    reg.suspendAuto();
+    reg.requestAutoRefresh("key-1", 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    reg.resumeAuto();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("requestAutoRefresh", () => {
+  it("polls the active account, and stops when the last consumer releases", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+
+    reg.requestAutoRefresh("key-1", 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    reg.releaseAutoRefresh("key-1");
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Releasing an id that never asked is a no-op, not a reset.
+    reg.releaseAutoRefresh("never-asked");
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs the tightest cadence asked for, and one view opting out cannot silence another", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+
+    reg.requestAutoRefresh("key-1", 30 * 60_000);
+    reg.requestAutoRefresh("key-2", 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // key-2's user unticks auto-refresh. key-1 still wants 30min, so polling
+    // continues on key-1's cadence rather than stopping.
+    reg.releaseAutoRefresh("key-2");
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(25 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-points at the new account on a swap instead of polling the one you left", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    accountsMock.list = vi.fn(() => [
+      { slug: "ada", addedAt: "2026-01-01T00:00:00Z" },
+      { slug: "bob", addedAt: "2026-02-01T00:00:00Z" },
+    ]);
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+    reg.requestAutoRefresh("menubar", 5 * 60_000);
+
+    const swapped: string[] = [];
+    reg.on("snapshot:ada", () => swapped.push("ada"));
+    reg.on("snapshot:bob", () => swapped.push("bob"));
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(swapped).toEqual(["ada"]);
+
+    Object.defineProperty(accountsMock, "activeSlug", { configurable: true, get: () => "bob" });
+    accountsMock.emit("swapped", "bob");
+    await vi.advanceTimersByTimeAsync(0);
+    swapped.length = 0;
+
+    // Every later tick belongs to bob; ada's timer is stood down, not left running.
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    expect(swapped).toContain("bob");
+    expect(swapped).not.toContain("ada");
+  });
+
+  it("does not push the next tick out every time the registry changes", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+    reg.requestAutoRefresh("menubar", 5 * 60_000);
+
+    // A host that re-reads accounts.json often (this one does it on every menu
+    // open) emits "changed" often. Re-arming on each one would mean the timer
+    // never reaches its interval and nothing ever polls.
+    for (let i = 0; i < 4; i++) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      accountsMock.emit("changed");
+    }
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("arms a newly adopted account, which did not exist when the request came in", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    accountsMock.list = vi.fn(() => []);
+    Object.defineProperty(accountsMock, "activeSlug", { configurable: true, get: () => null });
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+
+    // Nothing to poll yet — the registry is empty and nobody is logged in.
+    reg.requestAutoRefresh("menubar", 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    accountsMock.list = vi.fn(() => [{ slug: "ada", addedAt: "2026-01-01T00:00:00Z" }]);
+    Object.defineProperty(accountsMock, "activeSlug", { configurable: true, get: () => "ada" });
+    accountsMock.emit("changed");
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a cadence of 0 as a release", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+
+    reg.requestAutoRefresh("key-1", 5 * 60_000);
+    reg.requestAutoRefresh("key-1", 0);
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("honours a request that arrived before start(), once the accounts exist", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    fetchMock.mockResolvedValue(okResponse());
+
+    // Real ordering in the Stream Deck host: a key's onWillAppear can land
+    // before the accounts service has finished resolving, so there is an active
+    // slug with no per-account state behind it yet.
+    reg.requestAutoRefresh("key-1", 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    reg.start();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stands the poller down when the account it was polling is removed", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+    reg.requestAutoRefresh("menubar", 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    accountsMock.list = vi.fn(() => []);
+    Object.defineProperty(accountsMock, "activeSlug", { configurable: true, get: () => null });
+    accountsMock.emit("changed");
+
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("stop() clears the timers and forgets every account", async () => {
@@ -508,5 +678,92 @@ describe("markAwake", () => {
 
     await reg.refresh("ada");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("catches up after a sleep long enough to outlast the poll interval", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+    reg.requestAutoRefresh("menubar", 15 * 60_000);
+    await reg.refresh("ada");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // The machine slept for an hour. Timers do not advance while it sleeps, so
+    // the 15-minute tick has NOT come due — only the clock moved.
+    vi.setSystemTime(new Date(Date.now() + 60 * 60_000));
+    reg.markAwake();
+    expect(fetchMock).toHaveBeenCalledTimes(1); // nothing fires at resume+0
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // And the periodic timer restarts from the catch-up, not from before sleep.
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("spends no request on a short sleep, or when nothing is polling", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+    reg.requestAutoRefresh("menubar", 15 * 60_000);
+    await reg.refresh("ada");
+
+    // A lid closed for two minutes: the snapshot is still fresher than the
+    // cadence, so waking it up is not a reason to fetch.
+    vi.setSystemTime(new Date(Date.now() + 2 * 60_000));
+    reg.markAwake();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // With auto-refresh off entirely, wake keeps the old contract: it clears the
+    // coalesce window and nothing else.
+    reg.releaseAutoRefresh("menubar");
+    vi.setSystemTime(new Date(Date.now() + 60 * 60_000));
+    reg.markAwake();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps one pending catch-up across repeated wakes, and drops it on suspend", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+    reg.requestAutoRefresh("menubar", 15 * 60_000);
+    await reg.refresh("ada");
+
+    // Two resume events in quick succession (macOS emits one per wake reason)
+    // must not queue two fetches.
+    vi.setSystemTime(new Date(Date.now() + 60 * 60_000));
+    reg.markAwake();
+    reg.markAwake();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // Waking to a machine with no UI watching: the catch-up is cancelled with
+    // the rest of the polling rather than firing into a suspended registry.
+    vi.setSystemTime(new Date(Date.now() + 60 * 60_000));
+    reg.markAwake();
+    reg.suspendAuto();
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips the catch-up while Claude Code is idle", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+    reg.requestAutoRefresh("menubar", 15 * 60_000);
+    await reg.refresh("ada");
+
+    idleMock.mockResolvedValue(true);
+    vi.setSystemTime(new Date(Date.now() + 60 * 60_000));
+    reg.markAwake();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

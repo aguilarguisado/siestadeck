@@ -102,8 +102,12 @@ streamDeck.devices.onDeviceDidConnect(() => {
 });
 
 streamDeck.system.onSystemDidWakeUp(() => {
-  // Clear the per-account 5s coalesce window so a manual press right after
-  // wake isn't suppressed. We do NOT auto-fetch on wake.
+  // Clears the per-account 5s coalesce window so a manual press right after wake
+  // isn't suppressed, and — for accounts a visible key is polling — schedules one
+  // catch-up a few seconds later if the snapshot has already outlived its own
+  // cadence. Timers don't advance while the machine sleeps, so without that a
+  // tile would show yesterday's percentage until the interval elapsed in awake
+  // time. Nothing fetches for a key whose auto-refresh is switched off.
   quotaRegistry.markAwake();
   syncRegistryFromDisk("asleep");
 });

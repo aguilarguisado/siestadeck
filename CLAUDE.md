@@ -81,7 +81,7 @@ accountsRegistryJson (paths.ts)             ─┘   (EventEmitter snapshots)
 
 ## Where to look when working in...
 
-- **[packages/core/](packages/core/CLAUDE.md)** — snapshot model, the three data sources, quota refresh policy (5s coalesce, 1→10min 429 backoff, idle gating), atomic account swap.
+- **[packages/core/](packages/core/CLAUDE.md)** — snapshot model, the three data sources, quota refresh policy (5s coalesce, 1→10min 429 backoff, idle gating, refcounted auto-refresh, wake catch-up), atomic account swap.
 - **[apps/streamdeck/src/actions/](apps/streamdeck/src/actions/CLAUDE.md)** — Stream Deck action classes, lifecycle events, settings, the lazy-service `acquire`/`release` reference-counting contract.
 - **[apps/streamdeck/src/render/](apps/streamdeck/src/render/CLAUDE.md)** — SVG generation, resvg-wasm pipeline, font handling, LRU cache, theme tokens.
 - **[apps/streamdeck/io.github.aguilarguisado.siestadeck.sdPlugin/](apps/streamdeck/io.github.aguilarguisado.siestadeck.sdPlugin/CLAUDE.md)** — Manifest, Property Inspector HTML, datasource event protocol.

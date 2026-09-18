@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Account, QuotaSnapshot } from "@siesta/core";
 
 import { UNKNOWN } from "./format.js";
-import { buildMenuModel, type MenuActionId, type MenuInput, type MenuRow } from "./menuModel.js";
+import { buildMenuModel, rowKey, type MenuActionId, type MenuInput, type MenuRow } from "./menuModel.js";
 
 const NOW = new Date("2026-09-17T12:00:00Z");
 const inSeconds = (s: number) => new Date(NOW.getTime() + s * 1000);
@@ -63,7 +63,7 @@ function action(rows: MenuRow[], id: MenuActionId) {
 }
 
 describe("buildMenuModel", () => {
-  it("lays out the five things: three windows, account, login, refresh, quit", () => {
+  it("lays out the four things: three windows, account, login, quit", () => {
     expect(labels(build().rows)).toEqual([
       "5h · 18% · resets in 1h 15m",
       "7d · 76% · resets in 2d 3h",
@@ -73,9 +73,15 @@ describe("buildMenuModel", () => {
       "Switch account",
       "Log in to Claude…",
       "---",
-      "Refresh",
       "Quit Siesta",
     ]);
+  });
+
+  it("offers no Refresh row — opening the menu is the refresh", () => {
+    // The click that shows this menu fires quotaRegistry.refresh(), whose
+    // result is written into the open menu, and a timer keeps it current in
+    // between. A button here would only repeat what the click already did.
+    expect(labels(build().rows)).not.toContain("Refresh");
   });
 
   it("states where you are on a label, and where a click lands on the button", () => {
@@ -205,9 +211,41 @@ describe("buildMenuModel", () => {
     });
   });
 
-  it("always offers refresh and quit", () => {
+  it("always offers login and quit, whatever else is missing", () => {
     const rows = build({ snapshot: undefined, accounts: [], activeSlug: null }).rows;
-    expect(action(rows, "refresh").enabled).toBe(true);
+    expect(action(rows, "login").enabled).toBe(true);
     expect(action(rows, "quit").enabled).toBe(true);
+  });
+
+  describe("row identity", () => {
+    it("names every row that can be updated in place, and only those", () => {
+      const rows = build().rows;
+      expect(rows.map(rowKey)).toEqual([
+        "5h",
+        "7d",
+        "fable",
+        undefined, // separators are anonymous: nothing addresses them
+        "account",
+        "swap",
+        "login",
+        undefined,
+        "quit",
+      ]);
+    });
+
+    it("keeps ids unique, or Electron would address the wrong item", () => {
+      // Every state that adds or swaps rows, since an id collision would only
+      // show up in the one layout that produces it.
+      const layouts = [
+        build().rows,
+        build({ snapshot: snapshot({ cooldownUntil: inSeconds(47), cooldownReason: "rate" }) }).rows,
+        build({ snapshot: snapshot({ cooldownUntil: inSeconds(1800), cooldownReason: "auth" }) }).rows,
+        build({ accounts: [], activeSlug: null }).rows,
+      ];
+      for (const rows of layouts) {
+        const keys = rows.map(rowKey).filter((k) => k != null);
+        expect(new Set(keys).size).toBe(keys.length);
+      }
+    });
   });
 });

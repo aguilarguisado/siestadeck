@@ -13,14 +13,36 @@ import { pickNextSlug, type Account, type QuotaSnapshot, type QuotaWindowSnapsho
 
 import { formatPercent, formatResetsIn, formatWait, UNKNOWN } from "./format.js";
 
-/** Every clickable row. main.ts dispatches on these and nothing else. */
-export type MenuActionId = "swap" | "login" | "refresh" | "quit";
+/**
+ * Every clickable row. main.ts dispatches on these and nothing else.
+ *
+ * There is deliberately no "refresh": opening the menu refreshes, so a Refresh
+ * row would be a button for something that already happened.
+ */
+export type MenuActionId = "swap" | "login" | "quit";
+
+/** Identifies an info row across rebuilds. See `rowKey`. */
+export type InfoRowId = "5h" | "7d" | "fable" | "cooldown" | "signedOut" | "account";
 
 export type MenuRow =
   /** A read-only readout. Rendered disabled — macOS has no other way to say "not a button". */
-  | { kind: "info"; label: string }
+  | { kind: "info"; id: InfoRowId; label: string }
   | { kind: "action"; id: MenuActionId; label: string; enabled: boolean }
   | { kind: "separator" };
+
+/**
+ * The stable identity of a row, used as the Electron menu item's `id`.
+ *
+ * This is what lets main.ts write a fresh label into a menu that is already on
+ * screen instead of only getting it right on the next open: the refresh that
+ * opening the menu triggers lands half a second later, by which time the user
+ * is looking at the numbers. Positions can't carry that — signing out replaces
+ * three window rows with one prompt — so identity is a name, not an index, and
+ * a name that isn't in the open menu is simply skipped.
+ */
+export function rowKey(row: MenuRow): string | undefined {
+  return row.kind === "separator" ? undefined : row.id;
+}
 
 export type MenuModel = {
   /** The text beside the clock. Never empty — the status item would collapse. */
@@ -44,10 +66,19 @@ export type MenuInput = {
  * sketched: macOS menus render in a proportional font, so padded columns come
  * out ragged no matter how the spaces are counted.
  */
-function windowRow(name: string, win: QuotaWindowSnapshot | null | undefined, now: Date): MenuRow {
+function windowRow(
+  id: InfoRowId,
+  name: string,
+  win: QuotaWindowSnapshot | null | undefined,
+  now: Date,
+): MenuRow {
   const percent = formatPercent(win?.utilization);
   const resets = formatResetsIn(win?.resetsAt, now);
-  return { kind: "info", label: resets ? `${name} · ${percent} · resets in ${resets}` : `${name} · ${percent}` };
+  return {
+    kind: "info",
+    id,
+    label: resets ? `${name} · ${percent} · resets in ${resets}` : `${name} · ${percent}`,
+  };
 }
 
 export function buildMenuModel({ snapshot, accounts, activeSlug, now }: MenuInput): MenuModel {
@@ -64,19 +95,19 @@ export function buildMenuModel({ snapshot, accounts, activeSlug, now }: MenuInpu
     // refresh that finds a different credential drops it immediately. Showing
     // "retry in 27m" would be telling the user to wait for something they can
     // end right now by signing in.
-    rows.push({ kind: "info", label: "Signed out — Claude Code needs to sign in again" });
+    rows.push({ kind: "info", id: "signedOut", label: "Signed out — Claude Code needs to sign in again" });
   } else {
-    rows.push(windowRow("5h", snapshot?.fiveHour, now));
-    rows.push(windowRow("7d", snapshot?.sevenDay, now));
+    rows.push(windowRow("5h", "5h", snapshot?.fiveHour, now));
+    rows.push(windowRow("7d", "7d", snapshot?.sevenDay, now));
     // perModel.opus and .sonnet are legacy — the API sends null for both now —
     // so Fable is the only per-model window worth a row. Kept even when absent
     // (an account without a Fable window reads "—") so the menu does not change
     // height between opens.
-    rows.push(windowRow("Fable", snapshot?.perModel.fable, now));
+    rows.push(windowRow("fable", "Fable", snapshot?.perModel.fable, now));
 
     if (rateLimited) {
       const wait = formatWait(cooldownUntil, now);
-      rows.push({ kind: "info", label: wait ? `Rate limited — retry in ${wait}` : "Rate limited" });
+      rows.push({ kind: "info", id: "cooldown", label: wait ? `Rate limited — retry in ${wait}` : "Rate limited" });
     }
   }
 
@@ -89,6 +120,7 @@ export function buildMenuModel({ snapshot, accounts, activeSlug, now }: MenuInpu
   const active = accounts.find((a) => a.slug === activeSlug);
   rows.push({
     kind: "info",
+    id: "account",
     label: `Account: ${active?.displayName ?? (accounts.length === 0 ? "none" : UNKNOWN)}`,
   });
 
@@ -105,7 +137,10 @@ export function buildMenuModel({ snapshot, accounts, activeSlug, now }: MenuInpu
   rows.push({ kind: "action", id: "login", label: "Log in to Claude…", enabled: true });
 
   rows.push({ kind: "separator" });
-  rows.push({ kind: "action", id: "refresh", label: "Refresh", enabled: true });
+  // No Refresh row. Opening the menu already fires one, the numbers land in the
+  // open menu, and a timer keeps them current between opens — so the button
+  // would only ever be pressed to repeat something the click already did, and
+  // the 5s floor would swallow it anyway.
   rows.push({ kind: "action", id: "quit", label: "Quit Siesta", enabled: true });
 
   return {

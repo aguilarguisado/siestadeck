@@ -17,12 +17,12 @@ siestadeck turns physical Stream Deck keys into a live readout of your Claude Co
 ## Why siestadeck
 
 - **Glanceable quota.** See your 5-hour, 7-day, and per-model Fable weekly Max windows without opening a terminal or the Claude app.
-- **Safe by default.** No background polling unless you explicitly enable it. Manual refresh on key press; minimum 5-minute interval when auto is on; automatic backoff on `429`.
+- **Current without being asked.** The numbers keep themselves up to date — every 15 minutes, skipped entirely while you're not using Claude Code, with a hard 5-minute floor, a 5-second throttle on presses, and automatic backoff on `429`. You can turn the background poll off per key and refresh by hand instead.
 - **One-press account swap.** Keep your personal and work Claude logins on the same deck; switch between them instantly without a browser round-trip.
 
 Tested on Stream Deck MK.2 (15 keys) on macOS. Designed to also work on XL, +, Mini, Neo, and Pedal. Windows support is in the codebase and CI builds green, but hasn't been validated end-to-end on a physical Windows + Stream Deck setup — community validation welcome.
 
-> **Heads up on the quota endpoint.** The 5h / 7d / Fable weekly numbers come from an undocumented OAuth usage endpoint that Anthropic uses internally. It is aggressively rate-limited and may change without notice. siestadeck never polls it on a tight loop: refresh is **manual by default**, and the optional background poll is capped at one request every 5 minutes per account. Using undocumented endpoints is at your own risk — see the [Disclaimer](#disclaimer) below.
+> **Heads up on the quota endpoint.** The 5h / 7d / Fable weekly numbers come from an undocumented OAuth usage endpoint that Anthropic uses internally. It is aggressively rate-limited and may change without notice. siestadeck never polls it on a tight loop: the background poll is capped at one request every 5 minutes per account, defaults to 15, stops while Claude Code is idle, and backs off on its own if the endpoint pushes back. Using undocumented endpoints is at your own risk — see the [Disclaimer](#disclaimer) below.
 
 ## Install
 
@@ -71,9 +71,10 @@ Account: work
 Switch to home
 Log in to Claude…
 ──────────────────────────────
-Refresh
 Quit Siesta
 ```
+
+Opening the menu *is* the refresh: the click fires one, and the numbers fill in while you're looking at them. That's why there's no Refresh row — and between opens, the percentage next to the clock keeps itself current on its own.
 
 **Switch to …** names the login you'll land on and cycles through every saved account, exactly like the Switch Account key. Both apps read the same account registry and the same quota, so you can run them together and either one can drive a switch the other picks up — the menu re-reads the registry every time it opens.
 
@@ -87,7 +88,7 @@ siestadeck ships five actions. They appear in the Stream Deck sidebar under thei
 
 | Action | What it shows | Press to | PI options |
 |---|---|---|---|
-| **Quota Meter** | Radial 5h, 7d, or Fable weekly quota %, color-coded green/amber/red | Force-refresh the quota | Window, auto-poll on/off |
+| **Quota Meter** | Radial 5h, 7d, or Fable weekly quota %, color-coded green/amber/red | Force-refresh the quota | Window, auto-poll on/off + interval |
 | **Extra Usage** | Real pay-as-you-go spend billed beyond your Max plan this month, with the monthly cap | Force-refresh the quota | — |
 | **Active Model** | Current model (Opus / Sonnet / Haiku) with version | Cycle the default model | — |
 | **Switch Account** | Active account or "→ next" hint | Cycle or jump to a specific account | Mode, target |
@@ -97,11 +98,14 @@ siestadeck ships five actions. They appear in the Stream Deck sidebar under thei
 
 The quota endpoint is the only piece of siestadeck that talks to Anthropic's servers. Everything else reads from local files. Polling behavior:
 
-- **Default: off.** Out of the box, the quota meter only refreshes when you press the **Quota Meter** key. If you never press one, the plugin never calls Anthropic.
-- **Optional background poll: 5-minute minimum interval.** You can turn on auto-refresh in the Quota Meter's Property Inspector. The minimum (and default) interval is 5 minutes per account; the plugin will not let you set it lower.
+- **Default: every 15 minutes, for the account you're actually on.** A key that shows quota keeps itself current while it's on screen and stops asking the moment it isn't. Switch accounts and the poll follows you.
+- **Nothing at all while you're not using Claude Code.** If Claude Code itself hasn't touched a project in 20 minutes, the background tick is skipped — a machine left running overnight makes no requests.
+- **5-minute hard floor.** You can set a longer interval per key in the Property Inspector, or untick auto-refresh and press for it instead. You cannot set it below 5 minutes.
+- **A press is throttled to one request every 5 seconds**, per account, however fast you press. The menu bar app's refresh-on-open lands on the same throttle.
+- **One catch-up after sleep.** Waking the machine schedules a single refresh a few seconds later, and only if what's on screen is older than your interval — timers don't run while a laptop is asleep, so otherwise the number would sit there stale.
 - **Automatic backoff on `429`.** If the endpoint rate-limits you, the plugin backs off (1 → 10 minutes) before trying again, regardless of the configured interval.
 
-In practice this means a typical setup makes a handful of requests per day, only when you're actively curious about your usage.
+In practice this means a few dozen requests on a working day, and none on a day you don't open Claude Code.
 
 ## Multi-account setup
 
@@ -143,7 +147,7 @@ A few things to know:
 
 - If you stay within your Max plan windows (5h / 7d / Fable weekly) and have never enabled pay-as-you-go, this reads `off` — there is no overage to show.
 - It is **not** "what your usage would have cost on the API," and it does not include the value of your subscription itself. It is purely the metered overage.
-- It refreshes on the same endpoint and the same schedule as the Quota Meter — manual by default, optional 5-minute background poll.
+- It refreshes on the same endpoint and the same schedule as the Quota Meter, and keeps itself current on its own even if it's the only siestadeck key on your deck.
 
 siestadeck deliberately does **not** ship a guessed-from-tokens cost estimate. For a local per-session cost breakdown, `npx ccusage daily` is the right tool.
 
@@ -158,8 +162,9 @@ siestadeck deliberately does **not** ship a guessed-from-tokens cost estimate. F
 
 ## Troubleshooting
 
-- **Quota meter stuck on `--%`** — most likely the macOS Keychain prompt was dismissed, or you haven't pressed the key yet (refresh is manual by default). Run `security find-generic-password -s "Claude Code-credentials" -w` in a terminal once, click "Always Allow", then press the Quota Meter key.
-- **`HTTP 429` in the plugin log** — the OAuth endpoint is aggressively rate-limited. The plugin backs off automatically (1 → 10 minutes); just wait it out, or turn auto-poll off and refresh on demand.
+- **Quota meter stuck on `--%`** — most likely the macOS Keychain prompt was dismissed. Run `security find-generic-password -s "Claude Code-credentials" -w` in a terminal once, click "Always Allow", then press the Quota Meter key.
+- **The number didn't move for a while** — background ticks are skipped while Claude Code has been idle for 20+ minutes, and pressing refreshes at most once every 5 seconds. Press the key once you're working again.
+- **`HTTP 429` in the plugin log** — the OAuth endpoint is aggressively rate-limited. The plugin backs off automatically (1 → 10 minutes); just wait it out, or lengthen the interval in the Quota Meter's Property Inspector.
 - **A new account I added isn't showing up in the PI dropdown** — close and reopen the Property Inspector, or restart the plugin with `npm run restart`.
 - **Extra Usage shows `off`** — that's expected unless you've enabled pay-as-you-go billing beyond your Max plan. It only shows a dollar figure when Anthropic is actually metering overage.
 

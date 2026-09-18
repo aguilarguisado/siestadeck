@@ -1,9 +1,9 @@
 # apps/desktop/ — @siesta/desktop: the macOS menu bar app
 
 The Stream Deck plugin's readout for people without a Stream Deck: live 5h utilisation beside
-the clock, and a menu with the 7d and Fable windows, a one-click account swap, login, and
-refresh. **macOS only** — core and the plugin stay cross-platform, this app does not, so
-there are no `isMac`/`isWindows` branches in here.
+the clock, and a menu with the 7d and Fable windows, a one-click account swap, and login.
+**macOS only** — core and the plugin stay cross-platform, this app does not, so there are no
+`isMac`/`isWindows` branches in here.
 
 **Only one copy runs at a time** (`app.requestSingleInstanceLock()`, which must come after
 `app.setName()` because the lock is keyed on the name). A second copy is not a second window
@@ -17,6 +17,27 @@ Where you are and where a click would take you are two separate rows: a greyed
 `Account: <name>` status line, then an enabled `Switch to <next name>`. They were one row at
 first, and it did not read as a button — a noun phrase directly under three other noun
 phrases that genuinely are labels. If you add a row here, check it survives that test.
+
+**There is no Refresh row, and re-adding one would be a regression.** Opening the menu fires
+`quotaRegistry.refresh()`, the result is written into the menu while it is open, and a timer
+keeps it current between opens. A Refresh button could therefore only ever repeat what the
+click that opened the menu already did — and the 5s floor in core would swallow it anyway,
+so it would read as broken.
+
+## Updating a menu that is already on screen
+
+The refresh fired by opening the menu lands a few hundred milliseconds *after* macOS has put
+the menu on screen, so `refreshOpenMenu()` in `main.ts` writes the new labels into the live
+`NSMenu` — `MenuItem.label` and `.enabled` are documented as settable after
+`buildFromTemplate`, and macOS re-lays out an open menu when a title changes.
+
+That is the only reason `menuModel.ts` rows carry an `id` and export `rowKey()`: the Electron
+item `id` is how a row is found again a moment later. **Identity is a name, not a position** —
+a refresh that comes back 401 replaces three window rows with one `Signed out` prompt, so
+positions would address the wrong row. A row whose name is not in the open menu is skipped,
+and that open menu keeps the numbers it was built with; the next one is built correctly.
+Adding a row means giving it an `InfoRowId`, and the `row identity` tests in
+`menuModel.test.ts` will fail if two rows can ever share one.
 
 ## The single most important architectural fact
 
@@ -53,9 +74,9 @@ Nothing outside `main.ts` may import `electron`.
 3. **Start order is load-bearing**: `await accountsService.start()` → `quotaRegistry.start()`.
    The registry reads `accountsService.list()` in `start()`.
 4. **Subscribe to `accountsService` *after* `quotaRegistry.start()`.** The registry registers
-   its own `"changed"` listener there to re-sync per-account state, and `EventEmitter` runs
-   listeners in registration order — going first means `armAutoRefresh()` looks up a state
-   that does not exist yet for a newly added account.
+   its own `"changed"` listener there to re-sync per-account state and re-point the poll
+   timer, and `EventEmitter` runs listeners in registration order — going first repaints the
+   title from a registry that has not yet heard about the new account.
 5. **`"snapshot"` fires twice for the active account** (`quota.ts:426-434`) — once tagged with
    its slug, once aliased to `null`. Keep the alias, drop the rest, or every refresh repaints
    twice.
@@ -85,11 +106,16 @@ and the Anthropic rate limit. Read the "Sharing a machine with a second app" sec
   decision host-side precisely so one swap does not produce two banners.
 - **Auto-refresh is 15 minutes**, matching the plugin's default. The service clamps anything
   under 5. Two apps polling independently means roughly twice the request rate against one
-  shared limit; the menu refreshing on open is what actually keeps the numbers current, and
-  the timer only exists so the *title* is not stale between opens.
-- **`enableAutoRefresh(null, …)` does not follow a swap.** It resolves the `null` to the active
-  slug at call time and arms the timer on that account's state, so `armAutoRefresh()` re-arms
-  on `"changed"` and stands the previous slug down.
+  shared limit; the menu refreshing on open is what keeps the numbers you read current, and
+  the timer is what keeps the *title* honest between opens.
+- **One `requestAutoRefresh("menubar", …)` at startup, and that is the whole wiring.** The
+  registry re-points it at whichever account is active, so nothing here re-arms on a swap.
+  The `armAutoRefresh()` this app used to carry existed only because the old API bound to a
+  slug; it is gone, and re-introducing per-host slug tracking would be a step backwards.
+- **Wake is handled in core.** `markAwake()` clears the coalesce window *and* schedules one
+  catch-up when the snapshot has outlived the poll interval — timers do not run while the
+  machine sleeps, so an overnight sleep would otherwise leave last night's number in the menu
+  bar until 15 minutes of awake time had passed.
 
 ## Build
 

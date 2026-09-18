@@ -42,6 +42,19 @@ Settings are TypeScript types persisted by Stream Deck per-key. They arrive on `
 
 If your action needs an account dropdown, override `onSendToPlugin` and call `handleAccountDatasource(ev)` from `apps/streamdeck/src/piDatasources.ts`. That handler responds to `event: "getAccounts"` and `event: "getAccountsIncludingActive"` payloads from the PI. See `switchAccount.ts` for the consumer side; `piDatasources.ts:14-35` for the protocol.
 
-## Auto-refresh opt-in
+## Auto-refresh: on by default, refcounted per key
 
-The quota service is silent by default — no network calls happen unless `enableAutoRefresh(slug, intervalMs)` is called or a user presses a key. The Quota Meter action exposes this as a per-key setting (`quotaMeter.ts:86-97`). Cadence is clamped to a 5-minute minimum inside the service.
+A key that shows quota asks the registry to keep it current for as long as it is on screen:
+
+```ts
+override async onWillAppear(ev) { quotaRegistry.requestAutoRefresh(ev.action.id, ms); }
+override onWillDisappear(ev)    { quotaRegistry.releaseAutoRefresh(ev.action.id); }
+```
+
+Same acquire/release shape as `activeSessionService`, and the same rule: **release on disappear**, or an off-screen key keeps spending requests. The last release stops the polling.
+
+- **`autoRefresh` is on unless the user unticked it.** `undefined` is a key that has never been opened in the Property Inspector, so `quotaMeter.ts` tests for `=== false`, not `!== true`. A gauge that is only correct in the second after you press it is not a gauge. The PI checkbox carries `default="true"` so it shows what the code does.
+- **Opting out is a *release*, not a zero cadence.** Two quota keys where one had auto-refresh off used to mean neither polled — `enableAutoRefresh(null, 0)` from the second key switched off the first. The registry now runs the tightest cadence any *live* consumer asked for.
+- **Cadence is clamped to ≥5 minutes** in the service, whatever the PI says, and automatic ticks are skipped entirely while Claude Code has been idle for 20+ minutes.
+- **One timer serves every key.** `ExtraUsage` requests the same 15-minute default with no PI of its own, so an extra-usage-only deck still updates; a deck with both keys polls once for the pair.
+- **A key press is still a manual refresh**, throttled by core's 5s floor. Don't add per-action throttling on top — it is already there, per account.

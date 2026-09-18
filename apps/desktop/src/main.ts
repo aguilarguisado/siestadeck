@@ -23,7 +23,7 @@ import { accountsService, openTerminalWithCommand, pickNextSlug, quotaRegistry, 
 import type { QuotaSnapshot } from "@siesta/core";
 
 import { formatPercent } from "./format.js";
-import { buildMenuModel, type MenuActionId, type MenuModel } from "./menuModel.js";
+import { buildMenuModel, rowKey, type MenuActionId, type MenuModel } from "./menuModel.js";
 
 const log = {
   info: (m: string) => console.info(`siesta: ${m}`),
@@ -51,33 +51,25 @@ process.on("uncaughtException", (err) => log.error(`uncaught exception: ${String
  * anyway. Two siesta apps poll independently against one shared rate limit, so
  * a tight cadence here costs roughly double; core's idle gate already skips
  * ticks when Claude Code itself has been quiet for 20 minutes. 15 minutes
- * matches the Stream Deck plugin's default. The menu also refreshes on open,
- * which is what actually keeps the numbers you look at current — this timer
- * exists so the *title* is not stale between opens.
+ * matches the Stream Deck plugin's default. This is what keeps the *title*
+ * current — the menu opening fires its own refresh on top.
  */
 const AUTO_REFRESH_MS = 15 * 60_000;
+
+/**
+ * There is one status item, so one consumer id is the whole refcount. The
+ * registry re-points this at whichever account is active, so nothing here has
+ * to re-arm on a swap.
+ */
+const AUTO_REFRESH_CONSUMER = "menubar";
 
 // Module scope: a Tray that goes out of scope can be garbage collected and take
 // the status item with it.
 let tray: Tray | undefined;
-// Retained while popped up, for the same reason.
+// Retained while popped up, for the same reason, and so a refresh that lands
+// while the menu is open can write into it. Cleared when it closes.
 let visibleMenu: Menu | undefined;
 let lastTitle = "";
-let autoArmedSlug: string | null = null;
-
-/**
- * `enableAutoRefresh(null, …)` resolves the null to the active slug *at call
- * time* and arms the timer on that account's state, so the timer does not
- * follow a swap — left alone it keeps polling the account you just left. Re-arm
- * against the new active account and stand the old one down.
- */
-function armAutoRefresh(): void {
-  const active = accountsService.activeSlug;
-  if (active === autoArmedSlug) return;
-  if (autoArmedSlug) quotaRegistry.enableAutoRefresh(autoArmedSlug, 0);
-  quotaRegistry.enableAutoRefresh(active, AUTO_REFRESH_MS);
-  autoArmedSlug = active;
-}
 
 function currentModel(): MenuModel {
   return buildMenuModel({
@@ -104,10 +96,43 @@ function renderTray(): void {
 function toTemplate(model: MenuModel): MenuItemConstructorOptions[] {
   return model.rows.map((row) => {
     if (row.kind === "separator") return { type: "separator" };
+    // id is what refreshOpenMenu() addresses the row by later.
     // Disabled is macOS's only vocabulary for "a readout, not a button".
-    if (row.kind === "info") return { label: row.label, enabled: false };
-    return { label: row.label, enabled: row.enabled, click: () => void onAction(row.id) };
+    if (row.kind === "info") return { id: rowKey(row), label: row.label, enabled: false };
+    return {
+      id: rowKey(row),
+      label: row.label,
+      enabled: row.enabled,
+      click: () => void onAction(row.id),
+    };
   });
+}
+
+/**
+ * Write the current numbers into the menu the user is looking at right now.
+ *
+ * Opening the menu fires a refresh that lands a few hundred milliseconds later,
+ * and `MenuItem.label` / `.enabled` are documented as settable after the menu
+ * is built — macOS re-lays out an open NSMenu when an item's title changes. So
+ * the percentages fill in while the menu is open instead of being right only on
+ * the next open.
+ *
+ * A row whose id is missing from the open menu is skipped: the shape changed
+ * under us (a refresh that comes back 401 replaces three window rows with one
+ * "Signed out" prompt), and there is nothing to write into. That open menu
+ * keeps the numbers it was built with; the next one is built correctly.
+ */
+function refreshOpenMenu(): void {
+  const menu = visibleMenu;
+  if (!menu) return;
+  for (const row of currentModel().rows) {
+    const key = rowKey(row);
+    if (key == null || row.kind === "separator") continue;
+    const item = menu.getMenuItemById(key);
+    if (!item) continue;
+    item.label = row.label;
+    if (row.kind === "action") item.enabled = row.enabled;
+  }
 }
 
 async function onAction(id: MenuActionId): Promise<void> {
@@ -116,9 +141,6 @@ async function onAction(id: MenuActionId): Promise<void> {
       return swapToNextAccount();
     case "login":
       return signIn();
-    case "refresh":
-      await quotaRegistry.refresh();
-      return;
     case "quit":
       app.quit();
       return;
@@ -175,12 +197,20 @@ function syncRegistryFromDisk(reason: string): Promise<void> {
 async function openMenu(): Promise<void> {
   await syncRegistryFromDisk("the menu was closed");
 
-  visibleMenu = Menu.buildFromTemplate(toTemplate(currentModel()));
-  tray?.popUpContextMenu(visibleMenu);
+  const menu = Menu.buildFromTemplate(toTemplate(currentModel()));
+  // Stop addressing a menu that is gone. Without this, a snapshot arriving
+  // after the menu closed would write labels into a dead NSMenu.
+  menu.once("menu-will-close", () => {
+    if (visibleMenu === menu) visibleMenu = undefined;
+  });
+  visibleMenu = menu;
+  tray?.popUpContextMenu(menu);
 
   // Network, so never awaited before the menu is shown — the click has to feel
-  // instant. The snapshot event repaints the title, and the next open reads the
-  // fresh numbers. The service's own 5s floor coalesces an impatient user.
+  // instant. When it lands, the snapshot handler repaints the title and writes
+  // the new numbers into the open menu. The service's own 5s floor coalesces an
+  // impatient user opening and closing the menu, which is also why this app has
+  // no Refresh row: this *is* the refresh.
   void quotaRegistry.refresh();
 }
 
@@ -220,9 +250,11 @@ async function start(): Promise<void> {
   tray.on("right-click", () => void openMenu());
 
   powerMonitor.on("resume", () => {
-    // Clear the per-account 5s coalesce window so the first refresh after wake
-    // is not suppressed. Deliberately no auto-fetch: laptops resume into all
-    // sorts of network states, and opening the menu will fetch anyway.
+    // Clears the 5s coalesce window, and — because timers do not advance while
+    // the machine sleeps — schedules one catch-up fetch a few seconds later if
+    // the snapshot is already older than the poll interval. Without it the
+    // title would show last night's percentage until 15 minutes of awake time
+    // had passed. The delay is core's, so the Wi-Fi has a chance to come back.
     quotaRegistry.markAwake();
     void syncRegistryFromDisk("asleep");
   });
@@ -232,15 +264,11 @@ async function start(): Promise<void> {
   await accountsService.start();
   quotaRegistry.start();
 
-  // Subscribe only now, and for a second reason: quotaRegistry.start() also
-  // registers an accountsService "changed" listener that re-syncs its per-
-  // account state. EventEmitter runs listeners in registration order, so
-  // registering after it is what guarantees armAutoRefresh() below sees a state
-  // that already exists for a newly added account.
-  accountsService.on("changed", () => {
-    armAutoRefresh();
-    renderTray();
-  });
+  // Subscribe only now: quotaRegistry.start() registers its own "changed"
+  // listener that re-syncs per-account state and re-points the poll timer, and
+  // EventEmitter runs listeners in registration order. Going first would repaint
+  // the title from a registry that has not yet heard about the new account.
+  accountsService.on("changed", renderTray);
   quotaRegistry.on("snapshot", (snap: QuotaSnapshot) => {
     // "snapshot" is emitted twice for the active account — once tagged with its
     // slug, once aliased to null. Keep the alias and drop the rest: this app
@@ -249,9 +277,12 @@ async function start(): Promise<void> {
     if (snap.error) log.warn(`quota: ${snap.error}`);
     else log.info(`quota: 5h=${formatPercent(snap.fiveHour?.utilization)} 7d=${formatPercent(snap.sevenDay?.utilization)}`);
     renderTray();
+    refreshOpenMenu();
   });
 
-  armAutoRefresh();
+  // One request for the whole app, and the registry keeps it pointed at the
+  // active account across swaps — hence no re-arming on "changed" here.
+  quotaRegistry.requestAutoRefresh(AUTO_REFRESH_CONSUMER, AUTO_REFRESH_MS);
   renderTray();
   log.info(`ready — ${accountsService.list().length} account(s), active ${accountsService.activeSlug ?? "none"}`);
   void quotaRegistry.refresh();
