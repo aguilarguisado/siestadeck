@@ -411,6 +411,36 @@ export class QuotaRegistry extends EventEmitter {
     if (state.autoIntervalMs === interval && state.autoTimer) return;
     state.autoIntervalMs = interval;
     this.armAutoTimer(state);
+    this.primeNow(state);
+  }
+
+  /**
+   * Fetch straight away for a view that has just appeared, when what we have to
+   * show it is older than the cadence it asked for.
+   *
+   * Arming a timer is not enough on its own. Every process starts with an empty
+   * registry, so a Stream Deck restart, a plugin reload or a deck being plugged
+   * back in would otherwise draw `--%` until the first tick a quarter of an hour
+   * later — exactly the staleness auto-refresh exists to remove.
+   *
+   * A cold start (no snapshot at all) deliberately skips the idle gate: a view
+   * appearing is a person launching an app or plugging in a deck, and one
+   * request per process is a fair price for having a number to show them. Once
+   * something is on screen the gate applies again, so a machine nobody is coding
+   * on still goes quiet.
+   */
+  private primeNow(state: AccountState): void {
+    if (this.suspended || !state.autoIntervalMs) return;
+    if (state.latest == null) {
+      void this.refresh(state.slug);
+      return;
+    }
+    const stale = isSnapshotStale({
+      now: Date.now(),
+      fetchedAt: state.latest.fetchedAt.getTime(),
+      intervalMs: state.autoIntervalMs,
+    });
+    if (stale) void this.autoTick(state);
   }
 
   /**
@@ -513,6 +543,12 @@ export class QuotaRegistry extends EventEmitter {
     const now = Date.now();
     for (const state of this.accounts.values()) {
       state.lastAttemptAt = 0;
+      // A fetch already on its way is the catch-up. Skipping here matters
+      // because clearing lastAttemptAt above defeats the 5s floor, so without
+      // it a wake landing mid-request would spend a second one five seconds
+      // later — and a request in flight reads as "no snapshot yet", the
+      // staleness test's most eager branch.
+      if (state.inFlight) continue;
       const stale = isSnapshotStale({
         now,
         fetchedAt: state.latest?.fetchedAt.getTime(),

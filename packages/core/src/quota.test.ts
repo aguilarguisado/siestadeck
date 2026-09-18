@@ -493,24 +493,68 @@ describe("auto-refresh timers", () => {
 });
 
 describe("requestAutoRefresh", () => {
+  it("fetches the moment a view appears with nothing to show, then on the cadence", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+
+    // Arming a timer alone would leave a fresh process drawing "--%" for a
+    // quarter of an hour — every plugin reload, every deck reconnect.
+    reg.requestAutoRefresh("key-1", 15 * 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // A second view appearing next to a fresh snapshot has something to show,
+    // so it costs nothing.
+    reg.requestAutoRefresh("key-2", 15 * 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("primes past the idle gate only on a cold start", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+    idleMock.mockResolvedValue(true);
+
+    // Nothing on screen and Claude Code quiet: one request buys a number to
+    // show the person who just plugged the deck in.
+    reg.requestAutoRefresh("key-1", 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // With something on screen, the gate is back in force — a stale snapshot on
+    // an idle machine is not worth a request.
+    reg.releaseAutoRefresh("key-1");
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    reg.requestAutoRefresh("key-1", 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("polls the active account, and stops when the last consumer releases", async () => {
     vi.useFakeTimers();
     const reg = new QuotaRegistry();
     reg.start();
     fetchMock.mockResolvedValue(okResponse());
 
-    reg.requestAutoRefresh("key-1", 5 * 60_000);
+    reg.requestAutoRefresh("key-1", 5 * 60_000); // the appear-time prime
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
     reg.releaseAutoRefresh("key-1");
     await vi.advanceTimersByTimeAsync(20 * 60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
     // Releasing an id that never asked is a no-op, not a reset.
     reg.releaseAutoRefresh("never-asked");
     await vi.advanceTimersByTimeAsync(20 * 60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("runs the tightest cadence asked for, and one view opting out cannot silence another", async () => {
@@ -521,16 +565,18 @@ describe("requestAutoRefresh", () => {
 
     reg.requestAutoRefresh("key-1", 30 * 60_000);
     reg.requestAutoRefresh("key-2", 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // one prime for both keys
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // key-2's cadence, not key-1's
 
     // key-2's user unticks auto-refresh. key-1 still wants 30min, so polling
     // continues on key-1's cadence rather than stopping.
     reg.releaseAutoRefresh("key-2");
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(25 * 60_000);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(25 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("re-points at the new account on a swap instead of polling the one you left", async () => {
@@ -549,7 +595,7 @@ describe("requestAutoRefresh", () => {
     reg.on("snapshot:bob", () => swapped.push("bob"));
 
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(swapped).toEqual(["ada"]);
+    expect(new Set(swapped)).toEqual(new Set(["ada"]));
 
     Object.defineProperty(accountsMock, "activeSlug", { configurable: true, get: () => "bob" });
     accountsMock.emit("swapped", "bob");
@@ -571,13 +617,17 @@ describe("requestAutoRefresh", () => {
 
     // A host that re-reads accounts.json often (this one does it on every menu
     // open) emits "changed" often. Re-arming on each one would mean the timer
-    // never reaches its interval and nothing ever polls.
+    // never reaches its interval and nothing ever polls — and would re-prime
+    // every time on top.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // the prime, and only that
     for (let i = 0; i < 4; i++) {
       await vi.advanceTimersByTimeAsync(60_000);
       accountsMock.emit("changed");
     }
-    await vi.advanceTimersByTimeAsync(60_000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("arms a newly adopted account, which did not exist when the request came in", async () => {
@@ -597,8 +647,11 @@ describe("requestAutoRefresh", () => {
     Object.defineProperty(accountsMock, "activeSlug", { configurable: true, get: () => "ada" });
     accountsMock.emit("changed");
 
-    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    // Adopting an account is as much a cold start as launching was.
+    await vi.advanceTimersByTimeAsync(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("treats a cadence of 0 as a release", async () => {
@@ -609,8 +662,10 @@ describe("requestAutoRefresh", () => {
 
     reg.requestAutoRefresh("key-1", 5 * 60_000);
     reg.requestAutoRefresh("key-1", 0);
+    // The appear-time prime has already gone out; what a release has to stop is
+    // every tick after it.
     await vi.advanceTimersByTimeAsync(20 * 60_000);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("honours a request that arrived before start(), once the accounts exist", async () => {
@@ -626,8 +681,10 @@ describe("requestAutoRefresh", () => {
     expect(fetchMock).not.toHaveBeenCalled();
 
     reg.start();
-    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    await vi.advanceTimersByTimeAsync(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("stands the poller down when the account it was polling is removed", async () => {
@@ -637,14 +694,14 @@ describe("requestAutoRefresh", () => {
     fetchMock.mockResolvedValue(okResponse());
     reg.requestAutoRefresh("menubar", 5 * 60_000);
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // prime + one tick
 
     accountsMock.list = vi.fn(() => []);
     Object.defineProperty(accountsMock, "activeSlug", { configurable: true, get: () => null });
     accountsMock.emit("changed");
 
     await vi.advanceTimersByTimeAsync(30 * 60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("stop() clears the timers and forgets every account", async () => {
@@ -686,7 +743,7 @@ describe("markAwake", () => {
     reg.start();
     fetchMock.mockResolvedValue(okResponse());
     reg.requestAutoRefresh("menubar", 15 * 60_000);
-    await reg.refresh("ada");
+    await vi.advanceTimersByTimeAsync(0); // the appear-time prime lands
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     // The machine slept for an hour. Timers do not advance while it sleeps, so
@@ -709,7 +766,7 @@ describe("markAwake", () => {
     reg.start();
     fetchMock.mockResolvedValue(okResponse());
     reg.requestAutoRefresh("menubar", 15 * 60_000);
-    await reg.refresh("ada");
+    await vi.advanceTimersByTimeAsync(0); // the appear-time prime lands
 
     // A lid closed for two minutes: the snapshot is still fresher than the
     // cadence, so waking it up is not a reason to fetch.
@@ -733,7 +790,7 @@ describe("markAwake", () => {
     reg.start();
     fetchMock.mockResolvedValue(okResponse());
     reg.requestAutoRefresh("menubar", 15 * 60_000);
-    await reg.refresh("ada");
+    await vi.advanceTimersByTimeAsync(0); // the appear-time prime lands
 
     // Two resume events in quick succession (macOS emits one per wake reason)
     // must not queue two fetches.
@@ -752,13 +809,36 @@ describe("markAwake", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("adds no catch-up on top of a request already in flight", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    let answer!: (res: unknown) => void;
+    fetchMock.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+
+    reg.requestAutoRefresh("menubar", 15 * 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // the prime, still unanswered
+
+    // Waking mid-request: there is no snapshot yet, which is the staleness
+    // test's most eager branch, and markAwake clears the 5s floor that would
+    // otherwise absorb this. The request on its way *is* the catch-up.
+    reg.markAwake();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    answer(okResponse());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reg.snapshotFor("ada")?.fiveHour?.utilization).toBe(0.25);
+  });
+
   it("skips the catch-up while Claude Code is idle", async () => {
     vi.useFakeTimers();
     const reg = new QuotaRegistry();
     reg.start();
     fetchMock.mockResolvedValue(okResponse());
     reg.requestAutoRefresh("menubar", 15 * 60_000);
-    await reg.refresh("ada");
+    await vi.advanceTimersByTimeAsync(0); // the appear-time prime lands
 
     idleMock.mockResolvedValue(true);
     vi.setSystemTime(new Date(Date.now() + 60 * 60_000));
