@@ -18,14 +18,15 @@ npm run icons       # rasterize SVGs → PNG assets (also runs as a prebuild hoo
 npm run build       # bundle the plugin into the .sdPlugin/bin/ directory
 npm run link        # symlink the plugin into Stream Deck (one-time)
 npm run watch       # rebuild + restart the plugin on every save
+npm run desktop     # build + launch the macOS menu bar app (macOS only)
 ```
 
-This is an npm-workspaces monorepo (`packages/core` + `apps/streamdeck`). **Run every command from the repo root** — the build scripts delegate into the right workspace, and `apps/streamdeck/scripts/*.mjs` resolve paths relative to their own workspace, so invoking them by path from the root will not work.
+This is an npm-workspaces monorepo (`packages/core` + `apps/streamdeck` + `apps/desktop`). **Run every command from the repo root** — the build scripts delegate into the right workspace, and `apps/streamdeck/scripts/*.mjs` resolve paths relative to their own workspace, so invoking them by path from the root will not work.
 
 The dev happy-path is `npm run watch`. Every save rebuilds, then runs `streamdeck restart io.github.aguilarguisado.siestadeck`; the plugin reloads in Stream Deck within ~1 second. No manual reload needed. `@siesta/core` is consumed as TypeScript source rather than a built `dist/`, which is what keeps that loop a single stage — don't add a `tsc` prepass.
 
 Useful one-off commands:
-- `npm run typecheck` — `tsc --noEmit` over both workspaces. **This is the type gate, not `rollup -c`:** the rollup build reports type errors as warnings and still exits 0.
+- `npm run typecheck` — `tsc --noEmit` over all three workspaces. **This is the type gate, not `rollup -c`:** the rollup build reports type errors as warnings and still exits 0.
 - `npm run validate` — validate `manifest.json` against the Stream Deck SDK.
 - `npm run restart` — reload the plugin in the running Stream Deck app.
 - `npm run pack` — produce a `.streamDeckPlugin` distributable (runs the release-readiness check first).
@@ -35,7 +36,7 @@ Useful one-off commands:
 
 Before changing code, read the per-directory `CLAUDE.md` files — they document the architecture in detail. The non-negotiable rules:
 
-1. **Actions are stateless renderers.** They never poll, never fetch, never read files. They subscribe to a service snapshot and re-render. All polling, file watching, network calls, rate-limiting, and caching live in `packages/core/src/`.
+1. **Views are stateless renderers.** Stream Deck actions and menu bar rows alike never poll, never fetch, never read files. They subscribe to a service snapshot and re-render. All polling, file watching, network calls, rate-limiting, and caching live in `packages/core/src/`.
 2. **Services are EventEmitter singletons.** Each exports a single default instance (`accountsService`, `quotaRegistry`, `activeSessionService`). Never `new` them in actions.
 3. **`Bundler` resolution + `.js` import suffixes.** Even though sources are `.ts`, intra-repo imports use the `.js` extension (see `apps/streamdeck/src/plugin.ts:3-16`). Don't strip them.
 4. **`unref()` every long-lived timer** that should not keep the Node event loop alive. The plugin host shuts down cleanly only if no live timers remain.
