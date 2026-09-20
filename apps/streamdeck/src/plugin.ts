@@ -73,6 +73,7 @@ streamDeck.devices.onDeviceDidDisconnect(() => {
   if (countConnectedDevices() > 0) return;
   streamDeck.logger.info("no Stream Deck devices connected — suspending background work");
   quotaRegistry.suspendAuto();
+  quotaRegistry.releaseAllAutoRefresh();
   activeSessionService.releaseAll();
 });
 

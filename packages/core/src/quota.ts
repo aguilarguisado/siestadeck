@@ -7,7 +7,6 @@ import { log } from "./log.js";
 import {
   backoffLabel,
   buildSnapshot,
-  clampAutoInterval,
   computeBackoffMs,
   decideRefresh,
   IDLE_THRESHOLD_MS,
@@ -58,9 +57,9 @@ type AccountState = {
   wakeTimer?: NodeJS.Timeout;
   /**
    * Configured auto-refresh cadence in ms (already clamped to MIN_AUTO_POLL_MS).
-   * Set by enableAutoRefresh / requestAutoRefresh and remembered across
-   * suspend/resume so that pausing on device-disconnect doesn't forget the
-   * user's setting. 0 means "auto-refresh disabled".
+   * Resolved from the views' `requestAutoRefresh` cadences and remembered
+   * across suspend/resume, so a pause does not forget what was asked for.
+   * 0 means "auto-refresh disabled".
    */
   autoIntervalMs: number;
 };
@@ -385,6 +384,23 @@ export class QuotaRegistry extends EventEmitter {
   }
 
   /**
+   * Withdraw every cadence request at once — the auto-refresh counterpart to
+   * `activeSessionService.releaseAll()`, for the device-disconnect path.
+   *
+   * `suspendAuto` alone is not enough. It stops the timers but remembers each
+   * cadence, so the keys that re-appear on reconnect ask for the interval
+   * already on file, `applyAutoRequests` returns early, and `primeNow` never
+   * runs — leaving an hour-old number on screen until the next tick. It also
+   * drops the requests of keys deleted while the deck was away, which would
+   * otherwise hold the poll open for a view that no longer exists.
+   */
+  releaseAllAutoRefresh(): void {
+    if (this.autoRequests.size === 0) return;
+    this.autoRequests.clear();
+    this.applyAutoRequests();
+  }
+
+  /**
    * Point the requested cadence at whichever account is active now.
    *
    * Idempotent on purpose — it runs on every account change, and re-arming a
@@ -441,22 +457,6 @@ export class QuotaRegistry extends EventEmitter {
       intervalMs: state.autoIntervalMs,
     });
     if (stale) void this.autoTick(state);
-  }
-
-  /**
-   * Enable auto-refresh for one named account, independently of what the views
-   * have asked for. Cadence is clamped to 5min+; pass 0 to disable.
-   *
-   * Prefer `requestAutoRefresh` — a host almost always means "the account the
-   * user is looking at", which is not a slug but a question re-answered on
-   * every swap. This is the primitive underneath, kept for a host that really
-   * does mean one fixed account.
-   */
-  enableAutoRefresh(slug: string, intervalMs: number): void {
-    const state = this.accounts.get(slug);
-    if (!state) return;
-    state.autoIntervalMs = clampAutoInterval(intervalMs);
-    this.armAutoTimer(state);
   }
 
   private armAutoTimer(state: AccountState): void {

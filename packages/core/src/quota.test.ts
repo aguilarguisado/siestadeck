@@ -421,24 +421,28 @@ describe("auto-refresh timers", () => {
     const reg = new QuotaRegistry();
     reg.start();
 
-    // Asked for 1s; the floor is 5min, so nothing fires at 1s.
-    reg.enableAutoRefresh("ada", 1_000);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetchMock).not.toHaveBeenCalled();
-
     fetchMock.mockResolvedValue(okResponse());
-    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    // Asked for 1s; the floor is 5min. The appear-time prime lands at once,
+    // then nothing until the clamped cadence comes due.
+    reg.requestAutoRefresh("key-1", 1_000);
+    await vi.advanceTimersByTimeAsync(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
     // Claude Code has gone quiet: the tick still re-arms but spends no request.
     idleMock.mockResolvedValue(true);
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
     // And it recovers when Claude is active again, proving the re-arm happened.
     idleMock.mockResolvedValue(false);
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("suspends and resumes on the remembered interval", async () => {
@@ -446,33 +450,34 @@ describe("auto-refresh timers", () => {
     const reg = new QuotaRegistry();
     reg.start();
     fetchMock.mockResolvedValue(okResponse());
-    reg.enableAutoRefresh("ada", 5 * 60_000);
+    reg.requestAutoRefresh("key-1", 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // the appear-time prime
 
     reg.suspendAuto();
     await vi.advanceTimersByTimeAsync(20 * 60_000);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // resumeAuto takes no interval argument — the state remembers it.
+    // resumeAuto takes no interval argument — the state remembers it. This is
+    // the pause a host wants when it still has the same views on screen; the
+    // device-disconnect path pairs it with releaseAllAutoRefresh instead.
     reg.resumeAuto();
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("stops the timer when passed 0, and ignores accounts that do not exist", async () => {
+  it("treats a cadence of 0 as a release", async () => {
     vi.useFakeTimers();
     const reg = new QuotaRegistry();
     reg.start();
     fetchMock.mockResolvedValue(okResponse());
-    reg.enableAutoRefresh("ada", 5 * 60_000);
-    reg.enableAutoRefresh("ada", 0);
+    reg.requestAutoRefresh("key-1", 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // the appear-time prime
 
+    reg.requestAutoRefresh("key-1", 0);
     await vi.advanceTimersByTimeAsync(20 * 60_000);
-    expect(fetchMock).not.toHaveBeenCalled();
-
-    // Should not throw.
-    reg.enableAutoRefresh("nobody", 5 * 60_000);
-    await vi.advanceTimersByTimeAsync(20 * 60_000);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("suspend wins over a request that arrives while no UI is watching", async () => {
@@ -555,6 +560,58 @@ describe("requestAutoRefresh", () => {
     reg.releaseAutoRefresh("never-asked");
     await vi.advanceTimersByTimeAsync(20 * 60_000);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("primes again when the deck comes back, instead of showing the old number until the next tick", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+
+    reg.requestAutoRefresh("key-1", 15 * 60_000); // the appear-time prime
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // The deck is unplugged. `willDisappear` does not fire per key on a device
+    // disconnect, so the requests have to be dropped wholesale — suspending
+    // alone remembers the cadence, and a remembered cadence is what makes the
+    // re-appearing key look like it is already being polled.
+    reg.suspendAuto();
+    reg.releaseAllAutoRefresh();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Plugged back in an hour later: the key gets a fresh number on appear,
+    // not at the end of another quarter of an hour.
+    reg.resumeAuto();
+    reg.requestAutoRefresh("key-1", 15 * 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops the request of a key deleted while the deck was away", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+
+    reg.requestAutoRefresh("doomed-key", 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    reg.suspendAuto();
+    reg.releaseAllAutoRefresh();
+    reg.resumeAuto();
+
+    // Nothing asked again, so nothing polls — the deleted key cannot hold the
+    // network open for a view that no longer exists.
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // And the second withdrawal is a no-op rather than a re-arm.
+    reg.releaseAllAutoRefresh();
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("runs the tightest cadence asked for, and one view opting out cannot silence another", async () => {
@@ -709,11 +766,13 @@ describe("requestAutoRefresh", () => {
     const reg = new QuotaRegistry();
     reg.start();
     fetchMock.mockResolvedValue(okResponse());
-    reg.enableAutoRefresh("ada", 5 * 60_000);
+    reg.requestAutoRefresh("key-1", 5 * 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // the appear-time prime
 
     reg.stop();
     await vi.advanceTimersByTimeAsync(20 * 60_000);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(reg.snapshotFor("ada")).toBeUndefined();
   });
 });
