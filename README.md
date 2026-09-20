@@ -2,7 +2,7 @@
 
 # siestadeck
 
-> **Time to siesta.** — Live Claude Code telemetry on your Elgato Stream Deck.
+> **Time to siesta.** — Live Claude Code telemetry, on your Stream Deck or in your menu bar.
 
 [![CI](https://github.com/aguilarguisado/siestadeck/actions/workflows/ci.yml/badge.svg)](https://github.com/aguilarguisado/siestadeck/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -10,7 +10,7 @@
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-43853d.svg)](https://nodejs.org/)
 ![Platforms: macOS · Windows](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)
 
-siestadeck turns physical Stream Deck keys into a live readout of your Claude Code quota, spend, and active model — and gives you a one-press multi-account switcher. It reads from your local `~/.claude/` telemetry plus Anthropic's OAuth usage endpoint, with strict on-demand polling and automatic rate-limit handling.
+siestadeck is a live readout of your Claude Code quota, spend, and active model, with a one-press multi-account switcher. It comes as two apps over one core: an Elgato Stream Deck plugin, and a macOS menu bar app for when there's no deck in front of you. Both read from your local `~/.claude/` telemetry plus Anthropic's OAuth usage endpoint, with strict on-demand polling and automatic rate-limit handling.
 
 <p align="center"><img src="assets/deck-screenshot.png" alt="siestadeck on a Stream Deck — 5h and 7d quota meters, active model, account switcher, and an extra-usage readout" width="480"></p>
 
@@ -18,9 +18,9 @@ siestadeck turns physical Stream Deck keys into a live readout of your Claude Co
 
 - **Glanceable quota.** See your 5-hour, 7-day, and per-model Fable weekly Max windows without opening a terminal or the Claude app.
 - **Current without being asked.** The numbers keep themselves up to date — every 15 minutes, skipped entirely while you're not using Claude Code, with a hard 5-minute floor, a 5-second throttle on presses, and automatic backoff on `429`. You can turn the background poll off per key and refresh by hand instead.
-- **One-press account swap.** Keep your personal and work Claude logins on the same deck; switch between them instantly without a browser round-trip.
+- **One-press account swap.** Keep your personal and work Claude logins side by side; switch between them instantly from either app, without a browser round-trip.
 
-Tested on Stream Deck MK.2 (15 keys) on macOS. Designed to also work on XL, +, Mini, Neo, and Pedal. Windows support is in the codebase and CI builds green, but hasn't been validated end-to-end on a physical Windows + Stream Deck setup — community validation welcome.
+The plugin is tested on Stream Deck MK.2 (15 keys) on macOS, and designed to also work on XL, +, Mini, Neo, and Pedal. Windows support is in the codebase and CI builds green, but hasn't been validated end-to-end on a physical Windows + Stream Deck setup — community validation welcome. The menu bar app is macOS-only by design.
 
 > **Heads up on the quota endpoint.** The 5h / 7d / Fable weekly numbers come from an undocumented OAuth usage endpoint that Anthropic uses internally. It is aggressively rate-limited and may change without notice. siestadeck never polls it on a tight loop: the background poll is capped at one request every 5 minutes per account, defaults to 15, stops while Claude Code is idle, and backs off on its own if the endpoint pushes back. Using undocumented endpoints is at your own risk — see the [Disclaimer](#disclaimer) below.
 
@@ -36,25 +36,9 @@ On first run the plugin auto-adopts whatever account Claude Code is currently lo
 
 **First-run note (macOS):** the OS will prompt for permission to access the `Claude Code-credentials` keychain entry. Click **Always Allow** — otherwise the quota meter stays on `--%`.
 
-## Build from source
+## The macOS menu bar app
 
-If you'd rather build it yourself (or want to hack on it):
-
-```sh
-git clone https://github.com/aguilarguisado/siestadeck.git siestadeck && cd siestadeck
-npm install
-npm run icons      # rasterize SVGs → manifest PNGs
-npm run build      # bundle plugin.js into the .sdPlugin/bin/ directory
-npm run link       # symlink the plugin into Stream Deck
-```
-
-All commands run from the repo root — it's an npm-workspaces monorepo, and the unprefixed build scripts delegate to the `@siesta/streamdeck` workspace.
-
-Open Stream Deck — the siestadeck actions appear in the right sidebar under their own category.
-
-## No Stream Deck? The menu bar app
-
-There's a macOS menu bar version with the same readout, for when the deck isn't there — or isn't yours.
+The same readout, in the menu bar — for when the deck isn't there, or isn't yours.
 
 ```sh
 npm run desktop
@@ -79,6 +63,22 @@ Opening the menu *is* the refresh: the click fires one, and the numbers fill in 
 **Switch to …** names the login you'll land on and cycles through every saved account, exactly like the Switch Account key. Both apps read the same account registry and the same quota, so you can run them together and either one can drive a switch the other picks up — the menu re-reads the registry every time it opens.
 
 macOS only, and not packaged as a signed `.app` yet: it runs from source. Everything else about it — the credentials, the polling limits, the privacy story below — is identical to the plugin, because it is the same core.
+
+## Build from source
+
+If you'd rather build it yourself (or want to hack on it):
+
+```sh
+git clone https://github.com/aguilarguisado/siestadeck.git siestadeck && cd siestadeck
+npm install
+npm run icons      # rasterize SVGs → manifest PNGs
+npm run build      # bundle plugin.js into the .sdPlugin/bin/ directory
+npm run link       # symlink the plugin into Stream Deck
+```
+
+All commands run from the repo root — it's an npm-workspaces monorepo, and the unprefixed build scripts delegate to the `@siesta/streamdeck` workspace.
+
+Open Stream Deck — the siestadeck actions appear in the right sidebar under their own category.
 
 ## Actions
 
@@ -171,7 +171,7 @@ siestadeck deliberately does **not** ship a guessed-from-tokens cost estimate. F
 
 ## Repo layout
 
-siestadeck is one of two apps in an npm-workspaces monorepo. Everything that isn't UI — quota polling, credential handling, the account registry, session tailing — lives in `@siesta/core`, which is why the menu bar app can offer the same readout with no Stream Deck attached.
+siestadeck is two apps in an npm-workspaces monorepo. Everything that isn't UI — quota polling, credential handling, the account registry, session tailing — lives in `@siesta/core`, which is why the menu bar app can offer the same readout with no Stream Deck attached.
 
 ```
 packages/core/       @siesta/core — no UI dependencies of any kind

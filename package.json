@@ -47,7 +47,11 @@
     "claude-code",
     "anthropic",
     "developer-tools",
-    "telemetry"
+    "telemetry",
+    "menubar",
+    "menu-bar-app",
+    "macos",
+    "electron"
   ],
   "engines": {
     "node": ">=20"
