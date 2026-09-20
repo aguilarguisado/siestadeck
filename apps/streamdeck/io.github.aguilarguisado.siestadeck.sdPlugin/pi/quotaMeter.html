@@ -13,15 +13,17 @@
       <option value="fable">Fable weekly (per-model)</option>
     </sdpi-select>
   </sdpi-item>
+  <!-- default="true": the checkbox renders checked when the setting has never
+       been saved, matching the action, which treats an untouched key as on. -->
   <sdpi-item label="Auto-refresh">
-    <sdpi-checkbox setting="autoRefresh" label="Poll the quota endpoint in the background"></sdpi-checkbox>
+    <sdpi-checkbox setting="autoRefresh" default="true" label="Keep the quota current in the background"></sdpi-checkbox>
   </sdpi-item>
   <sdpi-item label="Interval (min)">
     <sdpi-textfield setting="autoRefreshMinutes" placeholder="15" type="number" min="5"></sdpi-textfield>
   </sdpi-item>
   <sdpi-item label="">
     <sdpi-textfield-typography>
-      Always reports the active logged-in account. "Fable weekly" shows the model-scoped weekly limit from the usage panel. Default is manual-only: pressing the key refreshes the quota. Turn on auto-refresh to poll in the background (default 15 minutes, 5-minute hard floor). Auto-refresh ticks are skipped automatically when Claude Code has been idle for 20+ minutes.
+      Always reports the active logged-in account. "Fable weekly" shows the model-scoped weekly limit from the usage panel. Auto-refresh is on by default: the key updates itself every 15 minutes (5-minute hard floor) and follows you across account switches. Ticks are skipped while Claude Code has been idle for 20+ minutes, and a press refreshes on demand — at most once every 5 seconds, however fast you press. Turning it off here only stops <em>this</em> key from asking; another quota key still polling keeps its own interval.
     </sdpi-textfield-typography>
   </sdpi-item>
 </body>

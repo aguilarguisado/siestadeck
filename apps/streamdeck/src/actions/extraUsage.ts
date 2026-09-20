@@ -13,6 +13,15 @@ import { drawExtraUsage } from "./draw/extraUsage.js";
 
 type Settings = Record<string, never>;
 
+/**
+ * This action has no Property Inspector, so there is no cadence to configure —
+ * it takes the same default the Quota Meter does. Spend read from the same
+ * snapshot as the gauge, so a deck showing only this key still updates on its
+ * own, and a deck showing both polls once for the pair (the registry runs one
+ * timer at the tightest requested cadence, not one per key).
+ */
+const AUTO_REFRESH_MS = 15 * 60_000;
+
 @action({ UUID: "io.github.aguilarguisado.siestadeck.extra-usage" })
 export class ExtraUsage extends SingletonAction<Settings> {
   private visible = new Map<string, KeyAction<Settings>>();
@@ -30,10 +39,12 @@ export class ExtraUsage extends SingletonAction<Settings> {
     this.visible.set(ev.action.id, ev.action);
     await ev.action.setTitle("");
     await this.draw(ev.action, quotaRegistry.snapshotFor(null) ?? null);
+    quotaRegistry.requestAutoRefresh(ev.action.id, AUTO_REFRESH_MS);
   }
 
   override onWillDisappear(ev: WillDisappearEvent<Settings>): void {
     this.visible.delete(ev.action.id);
+    quotaRegistry.releaseAutoRefresh(ev.action.id);
   }
 
   override onKeyDown(_ev: KeyDownEvent<Settings>): void {

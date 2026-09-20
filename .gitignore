@@ -13,6 +13,11 @@ node_modules/
 # Built PNGs are regenerated from apps/streamdeck/assets/icons/*.svg via `npm run icons`.
 **/io.github.aguilarguisado.siestadeck.sdPlugin/imgs/
 
+# Menu bar app: the rollup bundle, and the tray template PNGs regenerated from
+# apps/desktop/assets/tray.svg via `npm run icon -w @siesta/desktop`.
+apps/desktop/dist/
+apps/desktop/imgs/
+
 # Test coverage output
 coverage/
 

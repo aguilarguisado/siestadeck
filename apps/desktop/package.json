@@ -1,0 +1,26 @@
+{
+  "name": "@siesta/desktop",
+  "version": "0.1.0",
+  "description": "Time to siesta. Live Claude Code quota and multi-account control in the macOS menu bar.",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.cjs",
+  "license": "MIT",
+  "scripts": {
+    "icon": "node scripts/build-tray-icon.mjs",
+    "prebuild": "npm run icon",
+    "build": "rollup -c",
+    "watch": "rollup -c -w",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@siesta/core": "*"
+  },
+  "devDependencies": {
+    "electron": "^44.4.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

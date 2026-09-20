@@ -8,10 +8,12 @@ import {
   computeBackoffMs,
   decideRefresh,
   fableUsageWindowFromLimits,
+  isSnapshotStale,
   MAX_BACKOFF_MS,
   MIN_AUTO_POLL_MS,
   MIN_BACKOFF_MS,
   MIN_REFRESH_GAP_MS,
+  resolveAutoInterval,
   shouldClearAuthBackoff,
   type UsageLimit,
 } from "./quotaPolicy.js";
@@ -229,6 +231,45 @@ describe("clampAutoInterval", () => {
   it("passes through values at or above the floor", () => {
     expect(clampAutoInterval(MIN_AUTO_POLL_MS)).toBe(MIN_AUTO_POLL_MS);
     expect(clampAutoInterval(15 * 60_000)).toBe(15 * 60_000);
+  });
+});
+
+describe("resolveAutoInterval", () => {
+  it("polls nothing when nobody asked", () => {
+    expect(resolveAutoInterval([])).toBe(0);
+  });
+
+  it("runs the tightest cadence any view asked for", () => {
+    expect(resolveAutoInterval([30 * 60_000, 10 * 60_000, 20 * 60_000])).toBe(10 * 60_000);
+  });
+
+  it("clamps each request, so no combination can beat the floor", () => {
+    expect(resolveAutoInterval([60_000, 30 * 60_000])).toBe(MIN_AUTO_POLL_MS);
+  });
+
+  it("ignores requests for no polling instead of letting them win", () => {
+    // The whole point: a view that wants nothing can decline to ask, but it
+    // cannot silence a view that is still asking.
+    expect(resolveAutoInterval([0, -1, 15 * 60_000])).toBe(15 * 60_000);
+  });
+});
+
+describe("isSnapshotStale", () => {
+  const NOW = 10_000_000;
+
+  it("is never stale when nothing is polling — manual-only stays manual-only", () => {
+    expect(isSnapshotStale({ now: NOW, fetchedAt: undefined, intervalMs: 0 })).toBe(false);
+    expect(isSnapshotStale({ now: NOW, fetchedAt: 0, intervalMs: 0 })).toBe(false);
+  });
+
+  it("is stale before the first fetch", () => {
+    expect(isSnapshotStale({ now: NOW, fetchedAt: undefined, intervalMs: MIN_AUTO_POLL_MS })).toBe(true);
+  });
+
+  it("is stale once a poll interval has elapsed", () => {
+    const interval = 15 * 60_000;
+    expect(isSnapshotStale({ now: NOW, fetchedAt: NOW - interval, intervalMs: interval })).toBe(true);
+    expect(isSnapshotStale({ now: NOW, fetchedAt: NOW - interval + 1, intervalMs: interval })).toBe(false);
   });
 });
 

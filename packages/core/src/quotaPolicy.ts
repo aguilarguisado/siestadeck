@@ -8,6 +8,16 @@ export const MIN_REFRESH_GAP_MS = 5_000;
 export const IDLE_THRESHOLD_MS = 20 * 60_000;
 export const UNAUTHORIZED_BACKOFF_MS = 30 * 60_000;
 
+/**
+ * How long after a system wake the catch-up refresh waits.
+ *
+ * A laptop resumes into whatever network it can find, and a fetch fired at
+ * resume+0ms usually just logs a DNS failure. Five seconds is enough for Wi-Fi
+ * to associate, and costs nothing: the snapshot it replaces is already stale by
+ * more than a poll interval, which is the only reason we're fetching at all.
+ */
+export const WAKE_CATCHUP_DELAY_MS = 5_000;
+
 export type UsageWindow = { utilization: number; resets_at: string | null };
 
 // One entry of the newer `limits` array. `kind` stays a plain string — the
@@ -129,6 +139,48 @@ export function computeBackoffMs(retryAfterMs: number | null | undefined): numbe
 export function clampAutoInterval(intervalMs: number): number {
   if (intervalMs <= 0) return 0;
   return Math.max(intervalMs, MIN_AUTO_POLL_MS);
+}
+
+/**
+ * The cadence to actually run, given every cadence the live views have asked
+ * for. Zero means "nothing wants polling", which is also what an empty set
+ * returns — the refcount reaching zero is how polling stops.
+ *
+ * The tightest request wins. Views are independent (two quota keys on one deck,
+ * a key and a menu bar), and a view that wants no polling must not be able to
+ * stop another view's numbers from updating — it can only decline to ask.
+ * Every request is clamped on the way in, so no combination of requests can
+ * produce a cadence below the floor a single request gets.
+ */
+export function resolveAutoInterval(requested: Iterable<number>): number {
+  let tightest = 0;
+  for (const ms of requested) {
+    const clamped = clampAutoInterval(ms);
+    if (clamped === 0) continue;
+    if (tightest === 0 || clamped < tightest) tightest = clamped;
+  }
+  return tightest;
+}
+
+/**
+ * Whether a poller running at `intervalMs` would already have replaced the
+ * snapshot taken at `fetchedAt`. Never true when nothing is polling: a host
+ * that wants manual-only refresh keeps getting manual-only refresh.
+ *
+ * This exists for the wake path. Timers do not advance while the machine
+ * sleeps, so a 15-minute poll armed at midnight has *not* come due at
+ * breakfast, and without this nobody would notice the number on screen is from
+ * yesterday until the interval finally elapsed in awake time.
+ */
+export function isSnapshotStale(input: {
+  now: number;
+  /** `QuotaSnapshot.fetchedAt` as epoch ms; undefined before the first fetch. */
+  fetchedAt: number | undefined;
+  intervalMs: number;
+}): boolean {
+  if (input.intervalMs <= 0) return false;
+  if (input.fetchedAt == null) return true;
+  return input.now - input.fetchedAt >= input.intervalMs;
 }
 
 export type BackoffReason = "rate" | "auth";

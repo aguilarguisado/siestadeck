@@ -43,6 +43,14 @@ type Visible = {
 const SIESTA_FRAMES = 20;
 const SIESTA_FRAME_MS = 250;
 
+/**
+ * Cadence for a key that has never been configured. The service floor is 5
+ * minutes and two siesta apps may be polling the same rate limit, so this sits
+ * at 3× the floor; the idle gate skips ticks entirely once Claude Code has been
+ * quiet for 20 minutes.
+ */
+const DEFAULT_AUTO_REFRESH_MINUTES = 15;
+
 @action({ UUID: "io.github.aguilarguisado.siestadeck.quota-meter" })
 export class QuotaMeter extends SingletonAction<QuotaMeterSettings> {
   private visible = new Map<string, Visible>();
@@ -62,13 +70,16 @@ export class QuotaMeter extends SingletonAction<QuotaMeterSettings> {
     await ev.action.setTitle("");
     const cached = quotaRegistry.snapshotFor(null);
     await this.draw(visible, cached ?? null);
-    this.applyAutoRefresh(ev.payload.settings);
+    this.applyAutoRefresh(ev.action.id, ev.payload.settings);
   }
 
   override onWillDisappear(ev: WillDisappearEvent<QuotaMeterSettings>): void {
     const v = this.visible.get(ev.action.id);
     if (v?.tickTimer) clearTimeout(v.tickTimer);
     this.visible.delete(ev.action.id);
+    // Off-screen keys don't get a vote on the cadence. The registry stops
+    // polling once the last consumer — here or in another action — releases.
+    quotaRegistry.releaseAutoRefresh(ev.action.id);
   }
 
   override async onDidReceiveSettings(
@@ -80,20 +91,34 @@ export class QuotaMeter extends SingletonAction<QuotaMeterSettings> {
     await ev.action.setTitle("");
     const target: Visible = v ?? { action: ev.action, settings: ev.payload.settings, descentFrame: 0, phraseIndex: 0 };
     await this.draw(target, quotaRegistry.snapshotFor(null) ?? null);
-    this.applyAutoRefresh(ev.payload.settings);
+    // Only a tracked key votes on the cadence. A settings event for a key that
+    // never appeared would leave a request nothing ever releases, since
+    // onWillDisappear only fires for keys that did appear.
+    if (v) this.applyAutoRefresh(ev.action.id, ev.payload.settings);
   }
 
-  private applyAutoRefresh(settings: QuotaMeterSettings): void {
-    if (settings.autoRefresh !== true) {
-      quotaRegistry.enableAutoRefresh(null, 0);
+  /**
+   * Ask the registry to keep the active account current while this key is on
+   * screen.
+   *
+   * **Auto-refresh is on unless the user turned it off.** `undefined` means a
+   * key that has never been opened in the Property Inspector, and a gauge that
+   * is only correct in the second after you press it is not a gauge. Opting out
+   * is a release, not a zero cadence: this key stops asking, and any other key
+   * still asking keeps its own polling (`requestAutoRefresh`).
+   */
+  private applyAutoRefresh(consumerId: string, settings: QuotaMeterSettings): void {
+    if (settings.autoRefresh === false) {
+      quotaRegistry.releaseAutoRefresh(consumerId);
       return;
     }
     const raw =
       typeof settings.autoRefreshMinutes === "string"
         ? Number(settings.autoRefreshMinutes)
         : settings.autoRefreshMinutes;
-    const minutes = Number.isFinite(raw) && raw && raw > 0 ? Number(raw) : 15;
-    quotaRegistry.enableAutoRefresh(null, minutes * 60_000);
+    const minutes =
+      Number.isFinite(raw) && raw && raw > 0 ? Number(raw) : DEFAULT_AUTO_REFRESH_MINUTES;
+    quotaRegistry.requestAutoRefresh(consumerId, minutes * 60_000);
   }
 
   override async onTitleParametersDidChange(
