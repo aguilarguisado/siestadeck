@@ -1,6 +1,6 @@
 # packages/core/ — @siesta/core: data, business logic, lifecycle
 
-All polling, file watching, network calls, keychain I/O, and rate-limiting live here. Each service is an `EventEmitter` singleton exported as a `const` at the bottom of its file (e.g. `quota.ts:651`, `accounts.ts:823`). Actions consume snapshots; they do not own state.
+All polling, file watching, network calls, keychain I/O, and rate-limiting live here. Each service is an `EventEmitter` singleton exported as a `const` at the bottom of its file (e.g. `quota.ts:657`, `accounts.ts:823`). Actions consume snapshots; they do not own state.
 
 ## The three data sources
 
@@ -16,11 +16,11 @@ All polling, file watching, network calls, keychain I/O, and rate-limiting live 
 | `quotaRegistry` | eager (timers off until a view asks) | `plugin.ts` | Per-account state needs to exist; the polling is refcounted by `requestAutoRefresh`. |
 | `activeSessionService` | **lazy** | `acquire(id)` from any action that needs it | Tails JSONL files; spinning up a watcher for a key the user never displays is wasteful. |
 
-Lazy services use **reference-counted consumers**: the watcher starts on the first `acquire()` and stops when the last consumer `release()`s. See `activeSession.ts`. `releaseAll()` exists for the device-disconnect path in `plugin.ts`.
+Lazy services use **reference-counted consumers**: the watcher starts on the first `acquire()` and stops when the last consumer `release()`s. See `activeSession.ts`. `suspend()` / `resume()` pause the watcher for the device-disconnect path in `plugin.ts` *without* dropping consumers — see the disconnect bullet under the refresh policy for why a release there is a bug.
 
 ## Quota refresh policy (the non-obvious part)
 
-`QuotaRegistry` (`quota.ts:91-649`) enforces several layers of rate-limiting. **Do not bypass these** — Anthropic's endpoint will 429 you and the plugin's UX depends on the backoff being respected:
+`QuotaRegistry` (`quota.ts:91-655`) enforces several layers of rate-limiting. **Do not bypass these** — Anthropic's endpoint will 429 you and the plugin's UX depends on the backoff being respected:
 
 - **5-second floor per account** (`MIN_REFRESH_GAP_MS`, `quotaPolicy.ts:7,241`) — calls to `refresh(slug)` within 5s of the last attempt return the cached snapshot instead of hitting the network. This is the only throttle a manual refresh needs, and it is why neither host rate-limits its own UI: a key held down, and `apps/desktop` refreshing on every menu open, both land here.
 - **429 backoff: 1→10 minutes** (`MIN_BACKOFF_MS`, `MAX_BACKOFF_MS`, `quotaPolicy.ts:5-6,134-137`; the 429 branch is `quota.ts:249`) — a 429 sets `backoffUntil`. Refreshes during the cooldown re-emit a snapshot with the wait time so actions can render a "WAIT Xs" countdown without touching the network.
@@ -31,7 +31,7 @@ Lazy services use **reference-counted consumers**: the watcher starts on the fir
   - **The tightest surviving request wins** (`resolveAutoInterval`). A view that wants no polling releases its own request; it cannot switch off a view that is still asking. Two quota keys where one had auto-refresh off used to mean neither polled, decided by whichever appeared last.
   - **`applyAutoRequests` is idempotent.** It runs on every account change, and `apps/desktop` re-reads the registry on every menu open, so re-arming a healthy timer each time would push the next tick out forever and nothing would ever poll.
   - **A view that appears with nothing to show fetches at once** (`primeNow`). Arming a timer is not enough: every process starts with an empty registry, so a plugin reload or a deck reconnect would draw `--%` until the first tick a quarter of an hour later. A **cold start** (no snapshot at all) deliberately skips the idle gate — a view appearing is a person launching an app, and it is one request per process. With a snapshot already in hand the gate applies again, and a snapshot fresher than the cadence costs nothing.
-  - **A device disconnect withdraws every request** (`releaseAllAutoRefresh`, the auto-refresh counterpart to `activeSessionService.releaseAll()`). `suspendAuto` stops the timers but *remembers* each cadence, so without the withdrawal a key re-appearing on reconnect asks for the interval already on file, `applyAutoRequests` returns early and `primeNow` never runs — an hour-long unplug would show an hour-old number for another fifteen minutes. It also drops the requests of keys deleted while the deck was away.
+  - **A device disconnect pauses; it never withdraws.** `plugin.ts` calls `suspendAuto()` on the way out and `resumeAuto()` on the way back, and `resumeAuto` catches up any snapshot the time away made stale (`scheduleCatchUp`, the same one-slot delayed fetch `markAwake` uses, so a wake and a reconnect arriving together cost one request). Stream Deck replays neither `willDisappear` nor `willAppear` across a disconnect — the SDK still counts those keys as on screen — so requests withdrawn there are never asked for again: that is how a deck ended up with three visible quota keys and nothing polling, and a `LOG IN` tile that never noticed the user had signed back in. `releaseAllAutoRefresh` existed to force a `primeNow` from the re-appearing key; the key does not re-appear, and the resume's catch-up is what gives a fresh number now. The cost accepted: a key deleted while its deck was away keeps its request until the plugin restarts — one idle-gated request per cadence.
   - **Requesting is the only way in.** Cadence is clamped to ≥5 minutes wherever it is asked for, and a request of 0 is the same as releasing.
 - **Wake handling: `markAwake()` clears the 5s coalesce window and schedules one catch-up** (`WAKE_CATCHUP_DELAY_MS`, 5s), skipping any account with a request already in flight — clearing the coalesce window defeats the 5s floor, so a wake landing mid-request would otherwise spend a second one. Timers do not advance while the machine sleeps, so a 15-minute poll armed at midnight has not come due at breakfast — without the catch-up the menu bar would show last night's percentage until fifteen minutes of *awake* time had passed. It fires only for an account something is polling and only when the snapshot is already older than that cadence (`isSnapshotStale`), so a host that wants manual-only refresh keeps the old contract of spending no request on a wake. The 5s delay is what makes it safe: laptops resume into all sorts of network states.
 
@@ -69,8 +69,8 @@ This package is consumed by more than one app, so it must not assume which. CI e
 ## Adding a new service
 
 1. Extend `EventEmitter`, export as a singleton at the bottom of the file.
-2. Decide eager or lazy. If lazy, implement `acquire(id)` / `release(id)` / `releaseAll()` exactly like `activeSession.ts`.
-3. Define a `Snapshot` type. Compute a fingerprint string and short-circuit emits when nothing meaningful changed (`activeSession.ts:202-204`).
+2. Decide eager or lazy. If lazy, implement `acquire(id)` / `release(id)` / `suspend()` / `resume()` exactly like `activeSession.ts`. No `releaseAll()`: a disconnect is a pause (see the refresh policy).
+3. Define a `Snapshot` type. Compute a fingerprint string and short-circuit emits when nothing meaningful changed (`activeSession.ts:219-221`).
 4. `unref()` every timer and watcher so the plugin host can exit cleanly.
 5. Export whatever a host genuinely needs from `index.ts` — and nothing else.
 6. Register subscriptions or eager start in `apps/streamdeck/src/plugin.ts`. Wire device-disconnect / device-connect handlers if the service should suspend when no Stream Decks are visible.

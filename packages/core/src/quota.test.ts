@@ -46,6 +46,7 @@ const { readClaudeCredentialsMock } = vi.hoisted(() => ({
 vi.mock("./keychain.js", () => ({ readClaudeCredentials: readClaudeCredentialsMock }));
 
 const { QuotaRegistry } = await import("./quota.js");
+const { WAKE_CATCHUP_DELAY_MS } = await import("./quotaPolicy.js");
 
 // The endpoint reports utilization as a percentage; asWindow divides by 100.
 const USAGE = {
@@ -458,9 +459,9 @@ describe("auto-refresh timers", () => {
     await vi.advanceTimersByTimeAsync(20 * 60_000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // resumeAuto takes no interval argument — the state remembers it. This is
-    // the pause a host wants when it still has the same views on screen; the
-    // device-disconnect path pairs it with releaseAllAutoRefresh instead.
+    // resumeAuto takes no interval argument — the state remembers it. The
+    // snapshot is 20 minutes old against a 5-minute cadence, so the resume's
+    // catch-up is the second fetch; the next tick is an interval after it.
     reg.resumeAuto();
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -562,7 +563,7 @@ describe("requestAutoRefresh", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("primes again when the deck comes back, instead of showing the old number until the next tick", async () => {
+  it("keeps polling the keys still on screen when the deck comes back without replaying willAppear", async () => {
     vi.useFakeTimers();
     const reg = new QuotaRegistry();
     reg.start();
@@ -572,46 +573,62 @@ describe("requestAutoRefresh", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // The deck is unplugged. `willDisappear` does not fire per key on a device
-    // disconnect, so the requests have to be dropped wholesale — suspending
-    // alone remembers the cadence, and a remembered cadence is what makes the
-    // re-appearing key look like it is already being polled.
+    // The deck goes away — asleep with the Mac, or unplugged. Stream Deck sends
+    // no willDisappear, and when it comes back it sends no willAppear either:
+    // as far as the SDK is concerned those keys never left the screen.
     reg.suspendAuto();
-    reg.releaseAllAutoRefresh();
     await vi.advanceTimersByTimeAsync(60 * 60_000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // Plugged back in an hour later: the key gets a fresh number on appear,
-    // not at the end of another quarter of an hour.
+    // Back an hour later, with nobody asking again: a fresh number within the
+    // catch-up delay, and the polling carries on after it.
     reg.resumeAuto();
-    reg.requestAutoRefresh("key-1", 15 * 60_000);
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(WAKE_CATCHUP_DELAY_MS);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it("drops the request of a key deleted while the deck was away", async () => {
+  it("spends one catch-up, not two, when the keys do re-appear on reconnect", async () => {
     vi.useFakeTimers();
     const reg = new QuotaRegistry();
     reg.start();
     fetchMock.mockResolvedValue(okResponse());
 
-    reg.requestAutoRefresh("doomed-key", 5 * 60_000);
+    reg.requestAutoRefresh("key-1", 15 * 60_000); // the appear-time prime
     await vi.advanceTimersByTimeAsync(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     reg.suspendAuto();
-    reg.releaseAllAutoRefresh();
-    reg.resumeAuto();
-
-    // Nothing asked again, so nothing polls — the deleted key cannot hold the
-    // network open for a view that no longer exists.
     await vi.advanceTimersByTimeAsync(60 * 60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // And the second withdrawal is a no-op rather than a re-arm.
-    reg.releaseAllAutoRefresh();
-    await vi.advanceTimersByTimeAsync(20 * 60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Should a reconnect replay willAppear after all, in either order around
+    // resume, the key asks for the cadence already on file and the resume's
+    // catch-up is the only fetch.
+    reg.requestAutoRefresh("key-1", 15 * 60_000);
+    reg.resumeAuto();
+    reg.requestAutoRefresh("key-1", 15 * 60_000);
+    await vi.advanceTimersByTimeAsync(WAKE_CATCHUP_DELAY_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("collapses a wake and a reconnect into one catch-up", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+
+    reg.requestAutoRefresh("key-1", 15 * 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    reg.suspendAuto();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+
+    // A laptop waking is usually also the deck reconnecting, and Stream Deck
+    // does not promise which event lands first.
+    reg.resumeAuto();
+    reg.markAwake();
+    await vi.advanceTimersByTimeAsync(WAKE_CATCHUP_DELAY_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("runs the tightest cadence asked for, and one view opting out cannot silence another", async () => {

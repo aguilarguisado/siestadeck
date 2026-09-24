@@ -76,6 +76,8 @@ export class ActiveSessionService extends EventEmitter {
   private latest?: ActiveSessionSnapshot;
   private lastFingerprint?: string;
   private consumers = new Set<string>();
+  /** Set by `suspend()`: consumers are kept, but no scanning happens. */
+  private suspended = false;
 
   /**
    * Register a consumer (typically an action key by `action.id`). When the
@@ -84,29 +86,44 @@ export class ActiveSessionService extends EventEmitter {
    * filesystem work.
    */
   acquire(id: string): void {
-    const wasEmpty = this.consumers.size === 0;
     this.consumers.add(id);
-    if (wasEmpty) {
-      void this.scan();
-      this.timer = setInterval(() => void this.scan(), SCAN_INTERVAL_MS);
-      this.timer.unref();
-    }
+    this.startScanning();
   }
 
   release(id: string): void {
     if (!this.consumers.delete(id)) return;
-    if (this.consumers.size === 0 && this.timer) {
-      clearInterval(this.timer);
-      this.timer = undefined;
-    }
+    if (this.consumers.size === 0) this.stopScanning();
   }
 
-  releaseAll(): void {
-    this.consumers.clear();
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = undefined;
-    }
+  /**
+   * Stop scanning but keep every consumer — for when no UI can show the result,
+   * e.g. the last Stream Deck disconnects. A pause, not a release: Stream Deck
+   * replays neither `willDisappear` nor `willAppear` across a disconnect, so
+   * consumers dropped here would never be acquired again and the key would sit
+   * on the last model it drew.
+   */
+  suspend(): void {
+    this.suspended = true;
+    this.stopScanning();
+  }
+
+  /** Undo `suspend()`: scan now, and on the timer, if anyone is still watching. */
+  resume(): void {
+    this.suspended = false;
+    if (this.consumers.size > 0) this.startScanning();
+  }
+
+  private startScanning(): void {
+    if (this.timer || this.suspended) return;
+    void this.scan();
+    this.timer = setInterval(() => void this.scan(), SCAN_INTERVAL_MS);
+    this.timer.unref();
+  }
+
+  private stopScanning(): void {
+    if (!this.timer) return;
+    clearInterval(this.timer);
+    this.timer = undefined;
   }
 
   get snapshot(): ActiveSessionSnapshot | undefined {
