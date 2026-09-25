@@ -646,6 +646,79 @@ describe("pollForNewLogin", () => {
     expect(await slugsOnDisk()).toEqual(["ada"]);
   });
 
+  /**
+   * /profile answering per token: `emails[token]` is the account it belongs to,
+   * `null` a token Anthropic rejects (401), and `"throw"` a transient failure.
+   */
+  function profileByToken(emails: Record<string, string | null | "throw">) {
+    const mock = vi.fn(async (_url: string, init?: { headers?: Record<string, string> }) => {
+      const token = (init?.headers?.Authorization ?? "").replace(/^Bearer /, "");
+      const email = emails[token];
+      if (email === "throw") throw new Error("socket hang up");
+      if (email == null) return { ok: false, status: 401, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ account: { email } }) };
+    });
+    vi.stubGlobal("fetch", mock);
+    return mock;
+  }
+
+  it("keeps watching when the first write to land is not the finished login", async () => {
+    // The shape of the stuck LOG IN tile: the account's token is dead, the user
+    // presses Login, and something rewrites the live entry — still carrying the
+    // dead token — before the OAuth flow finishes. Adopting that write fails,
+    // and the real login lands seconds later with nothing watching for it.
+    const svc = await seeded({
+      accounts: [row("claude", { email: "claude@example.com" })],
+      activeSlug: "claude",
+    });
+    const changed = vi.fn();
+    svc.on("changed", changed);
+    profileByToken({ "dead-token": null, "fresh-token": "claude@example.com" });
+
+    keychain.snapshotClaudeCredentials.mockResolvedValue("dead");
+    svc.pollForNewLogin(undefined, { intervalMs: 5, timeoutMs: 5_000 });
+    await settleBaseline();
+
+    // Not the login: the same dead token, rewritten.
+    keychain.snapshotClaudeCredentials.mockResolvedValue("dead, rewritten");
+    keychain.readClaudeCredentials.mockResolvedValue(creds("dead-token"));
+    await settleBaseline();
+
+    // The login.
+    keychain.snapshotClaudeCredentials.mockResolvedValue("fresh");
+    keychain.readClaudeCredentials.mockResolvedValue(creds("fresh-token"));
+
+    await vi.waitFor(() => expect(changed).toHaveBeenCalled());
+    expect(keychain.writeGenericPassword).toHaveBeenCalledWith(
+      "siestadeck-token-claude",
+      "claude",
+      JSON.stringify(creds("fresh-token")),
+    );
+  });
+
+  it("retries a login it could not identify because /profile was unreachable", async () => {
+    const svc = await seeded({
+      accounts: [row("claude", { email: "claude@example.com" })],
+      activeSlug: "claude",
+    });
+    const changed = vi.fn();
+    svc.on("changed", changed);
+
+    keychain.snapshotClaudeCredentials.mockResolvedValue("dead");
+    svc.pollForNewLogin(undefined, { intervalMs: 5, timeoutMs: 5_000 });
+    await settleBaseline();
+
+    // The login lands while /profile is failing, then /profile comes back. The
+    // blob does not change again, so only a retry of the same write adopts it.
+    const profile = profileByToken({ "fresh-token": "throw" });
+    keychain.snapshotClaudeCredentials.mockResolvedValue("fresh");
+    keychain.readClaudeCredentials.mockResolvedValue(creds("fresh-token"));
+    await vi.waitFor(() => expect(profile).toHaveBeenCalled());
+    profileByToken({ "fresh-token": "claude@example.com" });
+
+    await vi.waitFor(() => expect(changed).toHaveBeenCalled());
+  });
+
   it("gives up after the timeout without adopting anything", async () => {
     const svc = await seeded({ accounts: [], activeSlug: null });
     keychain.snapshotClaudeCredentials.mockResolvedValue("unchanged");
@@ -656,6 +729,35 @@ describe("pollForNewLogin", () => {
     // The loop stopped on its own, and nothing was adopted.
     expect(keychain.snapshotClaudeCredentials).toHaveBeenCalled();
     expect(await slugsOnDisk()).toEqual([]);
+  });
+
+  it("still gives up on time when a keychain read never comes back", async () => {
+    const svc = await seeded({ accounts: [], activeSlug: null });
+    const cleared = vi.spyOn(globalThis, "clearInterval");
+    keychain.snapshotClaudeCredentials.mockResolvedValue("before");
+
+    svc.pollForNewLogin(undefined, { intervalMs: 5, timeoutMs: 30 });
+    await settleBaseline();
+
+    // A write lands, and the read that would adopt it hangs — a keychain
+    // prompt nobody answers. Every tick after it finds the last one still busy.
+    keychain.snapshotClaudeCredentials.mockResolvedValue("after");
+    keychain.readClaudeCredentials.mockReturnValue(new Promise(() => {}));
+    await new Promise((r) => setTimeout(r, 90));
+
+    // Nothing on disk tells a stopped poll from a stuck one; only the interval does.
+    expect(cleared).toHaveBeenCalled();
+  });
+
+  it("still gives up on time when the baseline read never comes back", async () => {
+    const svc = await seeded({ accounts: [], activeSlug: null });
+    const cleared = vi.spyOn(globalThis, "clearInterval");
+    keychain.snapshotClaudeCredentials.mockReturnValue(new Promise(() => {}));
+
+    svc.pollForNewLogin(undefined, { intervalMs: 5, timeoutMs: 10 });
+    await new Promise((r) => setTimeout(r, 60));
+
+    expect(cleared).toHaveBeenCalled();
   });
 
   it("cancels a prior poll loop when called again", async () => {

@@ -14,7 +14,7 @@ import {
   resolveAutoInterval,
   shouldClearAuthBackoff,
   UNAUTHORIZED_BACKOFF_MS,
-  WAKE_CATCHUP_DELAY_MS,
+  CATCHUP_DELAY_MS,
   type BackoffReason,
   type QuotaSnapshot,
   type QuotaWindowSnapshot,
@@ -53,8 +53,8 @@ type AccountState = {
    */
   authFailedToken?: string;
   autoTimer?: NodeJS.Timeout;
-  /** The one-shot catch-up scheduled by markAwake(). */
-  wakeTimer?: NodeJS.Timeout;
+  /** The one-shot catch-up scheduleCatchUp() arms, for a wake and a resume alike. */
+  catchUpTimer?: NodeJS.Timeout;
   /**
    * Configured auto-refresh cadence in ms (already clamped to MIN_AUTO_POLL_MS).
    * Resolved from the views' `requestAutoRefresh` cadences and remembered
@@ -384,23 +384,6 @@ export class QuotaRegistry extends EventEmitter {
   }
 
   /**
-   * Withdraw every cadence request at once — the auto-refresh counterpart to
-   * `activeSessionService.releaseAll()`, for the device-disconnect path.
-   *
-   * `suspendAuto` alone is not enough. It stops the timers but remembers each
-   * cadence, so the keys that re-appear on reconnect ask for the interval
-   * already on file, `applyAutoRequests` returns early, and `primeNow` never
-   * runs — leaving an hour-old number on screen until the next tick. It also
-   * drops the requests of keys deleted while the deck was away, which would
-   * otherwise hold the poll open for a view that no longer exists.
-   */
-  releaseAllAutoRefresh(): void {
-    if (this.autoRequests.size === 0) return;
-    this.autoRequests.clear();
-    this.applyAutoRequests();
-  }
-
-  /**
    * Point the requested cadence at whichever account is active now.
    *
    * Idempotent on purpose — it runs on every account change, and re-arming a
@@ -435,9 +418,10 @@ export class QuotaRegistry extends EventEmitter {
    * show it is older than the cadence it asked for.
    *
    * Arming a timer is not enough on its own. Every process starts with an empty
-   * registry, so a Stream Deck restart, a plugin reload or a deck being plugged
-   * back in would otherwise draw `--%` until the first tick a quarter of an hour
-   * later — exactly the staleness auto-refresh exists to remove.
+   * registry, so a Stream Deck restart or a plugin reload would otherwise draw
+   * `--%` until the first tick a quarter of an hour later — exactly the
+   * staleness auto-refresh exists to remove. (A deck plugged back in is
+   * `resumeAuto`'s job: its keys never left the screen, so none appears.)
    *
    * A cold start (no snapshot at all) deliberately skips the idle gate: a view
    * appearing is a person launching an app or plugging in a deck, and one
@@ -490,8 +474,8 @@ export class QuotaRegistry extends EventEmitter {
   private disarmAuto(state: AccountState): void {
     if (state.autoTimer) clearTimeout(state.autoTimer);
     state.autoTimer = undefined;
-    if (state.wakeTimer) clearTimeout(state.wakeTimer);
-    state.wakeTimer = undefined;
+    if (state.catchUpTimer) clearTimeout(state.catchUpTimer);
+    state.catchUpTimer = undefined;
     state.autoIntervalMs = 0;
   }
 
@@ -507,21 +491,31 @@ export class QuotaRegistry extends EventEmitter {
         clearTimeout(state.autoTimer);
         state.autoTimer = undefined;
       }
-      if (state.wakeTimer) {
-        clearTimeout(state.wakeTimer);
-        state.wakeTimer = undefined;
+      if (state.catchUpTimer) {
+        clearTimeout(state.catchUpTimer);
+        state.catchUpTimer = undefined;
       }
     }
   }
 
   /**
-   * Re-arm auto-refresh timers using each account's remembered interval.
+   * Re-arm auto-refresh timers using each account's remembered interval, and
+   * catch up any snapshot that has outlived its cadence while we were paused.
    * Call when a UI starts observing again — e.g. a Stream Deck device
    * reconnects.
+   *
+   * The catch-up is what lets a host pause instead of withdrawing its views'
+   * requests. Views still on screen may never ask again when the host comes
+   * back (see the disconnect handler in plugin.ts), so the requests have to
+   * survive the pause; this makes surviving it cost no staleness.
    */
   resumeAuto(): void {
     this.suspended = false;
-    for (const state of this.accounts.values()) this.armAutoTimer(state);
+    const now = Date.now();
+    for (const state of this.accounts.values()) {
+      this.armAutoTimer(state);
+      this.scheduleCatchUp(state, now);
+    }
   }
 
   /**
@@ -533,7 +527,7 @@ export class QuotaRegistry extends EventEmitter {
    * The catch-up exists because timers don't advance while the machine sleeps:
    * a 15-minute poll armed at midnight has not come due at breakfast, so
    * without this the menu bar would show last night's percentage until fifteen
-   * minutes of *awake* time had passed. It waits `WAKE_CATCHUP_DELAY_MS` for the
+   * minutes of *awake* time had passed. It waits `CATCHUP_DELAY_MS` for the
    * network to come back, and goes through the same idle gate as a normal tick.
    *
    * Nothing is fetched for an account no view is polling — a host that wants
@@ -543,28 +537,39 @@ export class QuotaRegistry extends EventEmitter {
     const now = Date.now();
     for (const state of this.accounts.values()) {
       state.lastAttemptAt = 0;
-      // A fetch already on its way is the catch-up. Skipping here matters
-      // because clearing lastAttemptAt above defeats the 5s floor, so without
-      // it a wake landing mid-request would spend a second one five seconds
-      // later — and a request in flight reads as "no snapshot yet", the
-      // staleness test's most eager branch.
-      if (state.inFlight) continue;
-      const stale = isSnapshotStale({
-        now,
-        fetchedAt: state.latest?.fetchedAt.getTime(),
-        intervalMs: state.autoIntervalMs,
-      });
-      if (!stale || this.suspended) continue;
-      if (state.wakeTimer) clearTimeout(state.wakeTimer);
-      state.wakeTimer = setTimeout(() => {
-        state.wakeTimer = undefined;
-        // Re-arm from here rather than leaving a timer that believes it is
-        // mid-interval: this tick is the interval's new starting point.
-        this.armAutoTimer(state);
-        void this.autoTick(state);
-      }, WAKE_CATCHUP_DELAY_MS);
-      state.wakeTimer.unref();
+      this.scheduleCatchUp(state, now);
     }
+  }
+
+  /**
+   * One delayed, idle-gated fetch for `state` if its snapshot is older than its
+   * cadence. Shared by wake and resume, and through one timer slot: a wake
+   * usually *is* a deck reconnect, so the two arrive together in either order,
+   * and each replaces the other's pending catch-up rather than adding a second.
+   * The delay is for the network, which a laptop resumes into in all states.
+   */
+  private scheduleCatchUp(state: AccountState, now: number): void {
+    // A fetch already on its way is the catch-up. Skipping here matters
+    // because markAwake clears lastAttemptAt, which defeats the 5s floor, so
+    // without it a wake landing mid-request would spend a second one five
+    // seconds later — and a request in flight reads as "no snapshot yet", the
+    // staleness test's most eager branch.
+    if (state.inFlight || this.suspended) return;
+    const stale = isSnapshotStale({
+      now,
+      fetchedAt: state.latest?.fetchedAt.getTime(),
+      intervalMs: state.autoIntervalMs,
+    });
+    if (!stale) return;
+    if (state.catchUpTimer) clearTimeout(state.catchUpTimer);
+    state.catchUpTimer = setTimeout(() => {
+      state.catchUpTimer = undefined;
+      // Re-arm from here rather than leaving a timer that believes it is
+      // mid-interval: this tick is the interval's new starting point.
+      this.armAutoTimer(state);
+      void this.autoTick(state);
+    }, CATCHUP_DELAY_MS);
+    state.catchUpTimer.unref();
   }
 
   private sync(): void {

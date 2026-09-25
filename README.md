@@ -99,11 +99,11 @@ siestadeck ships five actions. They appear in the Stream Deck sidebar under thei
 The quota endpoint is the only piece of siestadeck that talks to Anthropic's servers. Everything else reads from local files. Polling behavior:
 
 - **Default: every 15 minutes, for the account you're actually on.** A key that shows quota keeps itself current while it's on screen and stops asking the moment it isn't. Switch accounts and the poll follows you.
-- **One request when a key first appears**, so a reloaded plugin or a reconnected deck shows a real number straight away instead of `--%` until the first tick.
+- **One request when a key first appears**, so a reloaded plugin shows a real number straight away instead of `--%` until the first tick.
 - **Nothing at all while you're not using Claude Code.** If Claude Code itself hasn't touched a project in 20 minutes, the background tick is skipped — a machine left running overnight makes no requests.
 - **5-minute hard floor.** You can set a longer interval per key in the Property Inspector, or untick auto-refresh and press for it instead. You cannot set it below 5 minutes.
 - **A press is throttled to one request every 5 seconds**, per account, however fast you press. The menu bar app's refresh-on-open lands on the same throttle.
-- **One catch-up after sleep.** Waking the machine schedules a single refresh a few seconds later, and only if what's on screen is older than your interval — timers don't run while a laptop is asleep, so otherwise the number would sit there stale.
+- **One catch-up after sleep, or when the deck comes back.** Waking the machine, or plugging the Stream Deck back in, schedules a single refresh a few seconds later, and only if what's on screen is older than your interval — timers don't run while a laptop is asleep, and nothing polls while the deck is away, so otherwise the number would sit there stale. A wake and a reconnect arriving together still cost one request.
 - **Automatic backoff on `429`.** If the endpoint rate-limits you, the plugin backs off (1 → 10 minutes) before trying again, regardless of the configured interval.
 
 In practice this means a few dozen requests on a working day, and none on a day you don't open Claude Code.

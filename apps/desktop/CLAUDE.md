@@ -77,7 +77,7 @@ Nothing outside `main.ts` may import `electron`.
    its own `"changed"` listener there to re-sync per-account state and re-point the poll
    timer, and `EventEmitter` runs listeners in registration order — going first repaints the
    title from a registry that has not yet heard about the new account.
-5. **`"snapshot"` fires twice for the active account** (`quota.ts:618-626`) — once tagged with
+5. **`"snapshot"` fires twice for the active account** (`quota.ts:623-631`) — once tagged with
    its slug, once aliased to `null`. Keep the alias, drop the rest, or every refresh repaints
    twice.
 6. **Do not start `activeSessionService`.** It tails JSONL files and this app shows no active

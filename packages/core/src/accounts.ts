@@ -440,12 +440,13 @@ export class AccountsService extends EventEmitter {
     } catch {
       return null;
     }
-    let email: string | null;
-    try {
-      email = await this.fetchEmail(creds.claudeAiOauth.accessToken);
-    } catch {
-      return null; // transient /profile failure — can't identify this login yet
-    }
+    // Memoized: the Login poll retries a write it could not adopt on every tick,
+    // and a dead token must cost one /profile call, not one every two seconds.
+    // A transient failure is not memoized, so that retry still reaches the
+    // network. `?.`: a blob Claude Code wrote without a login in it is "not a
+    // login yet", not a crash.
+    const token = creds.claudeAiOauth?.accessToken;
+    const email = token ? await this.resolveEmail(token) : null;
     if (!email) return null;
     this.emailMemo.clear();
     // Everything from here down decides against the registry, so it all belongs
@@ -583,11 +584,18 @@ export class AccountsService extends EventEmitter {
    * this method picks up the resulting credentials after the user
    * completes the OAuth flow.
    *
-   * Captures the current credential blob as a baseline first; the first
-   * differing read triggers adoption. Polls every `intervalMs` (default
-   * 2000ms) and gives up after `timeoutMs` (default 3 minutes). The
-   * optional `displayName` is used as the label if the resulting account
-   * is new to the registry.
+   * Captures the current credential blob as a baseline first; every read that
+   * differs from it is offered to adoption, and the watch ends only when one is
+   * adopted. Polls every `intervalMs` (default 2000ms) and gives up after
+   * `timeoutMs` (default 3 minutes). The optional `displayName` is used as the
+   * label if the resulting account is new to the registry.
+   *
+   * *Why not stop at the first change.* A changed entry is not proof the OAuth
+   * flow finished: Claude Code rewrites the entry for its own reasons while
+   * still holding the dead token, and `/profile` can be briefly unreachable
+   * right as the real login lands. Stopping there let the login arrive seconds
+   * later with nothing watching, and left the quota tile on LOG IN for the rest
+   * of its 30-minute auth backoff.
    *
    * Subsequent calls cancel any prior poll loop.
    */
@@ -602,25 +610,41 @@ export class AccountsService extends EventEmitter {
       this.pollTimer = undefined;
     }
     const startedAt = Date.now();
-    let baseline: string | null = null;
+    // `undefined` until the baseline read lands. Comparing against a baseline
+    // not yet taken would offer the login already on file as the new one.
+    let baseline: string | null | undefined;
     void snapshotClaudeCredentials().then((v) => (baseline = v));
+    // An adoption spends a keychain read and a /profile call, which can outlast
+    // the interval; a second tick must not start a second adoption meanwhile.
+    let busy = false;
+    const stop = (): void => {
+      clearInterval(timer);
+      // Only our own: a later call may already have replaced us.
+      if (this.pollTimer === timer) this.pollTimer = undefined;
+    };
     const tick = async (): Promise<void> => {
-      const current = await snapshotClaudeCredentials();
-      const changed = current != null && current !== baseline;
-      if (changed) {
-        if (this.pollTimer) clearInterval(this.pollTimer);
-        this.pollTimer = undefined;
-        const slug = await this.adoptCurrentLogin({ displayName, intent: "explicit" });
-        if (slug) this.emit("changed");
-        return;
-      }
-      if (Date.now() - startedAt > timeoutMs) {
-        if (this.pollTimer) clearInterval(this.pollTimer);
-        this.pollTimer = undefined;
+      // Ahead of the guard below: a keychain read or /profile call that never
+      // settles would otherwise hold `busy`, or the baseline, and keep the poll
+      // alive for good. An adoption already in flight still finishes.
+      if (Date.now() - startedAt > timeoutMs) return stop();
+      if (busy || baseline === undefined) return;
+      busy = true;
+      try {
+        const current = await snapshotClaudeCredentials();
+        if (current != null && current !== baseline) {
+          const slug = await this.adoptCurrentLogin({ displayName, intent: "explicit" });
+          if (slug) {
+            stop();
+            this.emit("changed");
+          }
+        }
+      } finally {
+        busy = false;
       }
     };
-    this.pollTimer = setInterval(() => void tick(), intervalMs);
-    this.pollTimer.unref();
+    const timer = setInterval(() => void tick(), intervalMs);
+    timer.unref();
+    this.pollTimer = timer;
   }
 
   /** Takes `reg` explicitly — see `hasValidSelection` for why. */

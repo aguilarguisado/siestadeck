@@ -69,12 +69,15 @@ function countConnectedDevices(): number {
   return n;
 }
 
+// Pause, never release. Stream Deck replays neither willDisappear nor
+// willAppear across a disconnect — the SDK still counts those keys as on screen
+// — so anything withdrawn here is never asked for again: the quota keys stop
+// polling for good and a LOG IN tile never notices the user signed back in.
 streamDeck.devices.onDeviceDidDisconnect(() => {
   if (countConnectedDevices() > 0) return;
   streamDeck.logger.info("no Stream Deck devices connected — suspending background work");
   quotaRegistry.suspendAuto();
-  quotaRegistry.releaseAllAutoRefresh();
-  activeSessionService.releaseAll();
+  activeSessionService.suspend();
 });
 
 // Another siesta app may have added, removed or switched accounts while this
@@ -96,9 +99,10 @@ function syncRegistryFromDisk(reason: string): void {
 }
 
 streamDeck.devices.onDeviceDidConnect(() => {
-  // Visible actions re-acquire the local services via their own onWillAppear
-  // handlers. We only need to re-arm the quota auto-timers here.
+  // Both resume for the keys they already have. resumeAuto also catches up a
+  // snapshot the time away made stale, so the deck comes back to a fresh number.
   quotaRegistry.resumeAuto();
+  activeSessionService.resume();
   syncRegistryFromDisk("no device was connected");
 });
 

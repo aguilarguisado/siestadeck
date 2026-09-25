@@ -65,7 +65,8 @@ export default defineConfig({
       //   100%. The wrapper classes can only be exercised against a live
       //   Stream Deck host.
       // - activeSession.ts: wraps fs watching; its pure core lives in
-      //   activeSessionPolicy.ts and is covered there. No direct tests yet.
+      //   activeSessionPolicy.ts and is covered there. activeSession.test.ts
+      //   pins only the consumer lifecycle; the scan itself is untested.
       // - index.ts: the @siesta/core barrel, pure re-exports with no logic.
       // - desktop/main.ts: top-level Electron bootstrap. Tray, Menu and
       //   powerMonitor wiring that can only run inside a live main process.

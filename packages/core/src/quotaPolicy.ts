@@ -9,14 +9,14 @@ export const IDLE_THRESHOLD_MS = 20 * 60_000;
 export const UNAUTHORIZED_BACKOFF_MS = 30 * 60_000;
 
 /**
- * How long after a system wake the catch-up refresh waits.
+ * How long after a system wake or a resume the catch-up refresh waits.
  *
  * A laptop resumes into whatever network it can find, and a fetch fired at
  * resume+0ms usually just logs a DNS failure. Five seconds is enough for Wi-Fi
  * to associate, and costs nothing: the snapshot it replaces is already stale by
  * more than a poll interval, which is the only reason we're fetching at all.
  */
-export const WAKE_CATCHUP_DELAY_MS = 5_000;
+export const CATCHUP_DELAY_MS = 5_000;
 
 export type UsageWindow = { utilization: number; resets_at: string | null };
 
