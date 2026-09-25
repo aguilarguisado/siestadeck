@@ -623,6 +623,10 @@ export class AccountsService extends EventEmitter {
       if (this.pollTimer === timer) this.pollTimer = undefined;
     };
     const tick = async (): Promise<void> => {
+      // Ahead of the guard below: a keychain read or /profile call that never
+      // settles would otherwise hold `busy`, or the baseline, and keep the poll
+      // alive for good. An adoption already in flight still finishes.
+      if (Date.now() - startedAt > timeoutMs) return stop();
       if (busy || baseline === undefined) return;
       busy = true;
       try {
@@ -632,10 +636,8 @@ export class AccountsService extends EventEmitter {
           if (slug) {
             stop();
             this.emit("changed");
-            return;
           }
         }
-        if (Date.now() - startedAt > timeoutMs) stop();
       } finally {
         busy = false;
       }

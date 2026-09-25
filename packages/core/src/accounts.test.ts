@@ -731,6 +731,35 @@ describe("pollForNewLogin", () => {
     expect(await slugsOnDisk()).toEqual([]);
   });
 
+  it("still gives up on time when a keychain read never comes back", async () => {
+    const svc = await seeded({ accounts: [], activeSlug: null });
+    const cleared = vi.spyOn(globalThis, "clearInterval");
+    keychain.snapshotClaudeCredentials.mockResolvedValue("before");
+
+    svc.pollForNewLogin(undefined, { intervalMs: 5, timeoutMs: 30 });
+    await settleBaseline();
+
+    // A write lands, and the read that would adopt it hangs — a keychain
+    // prompt nobody answers. Every tick after it finds the last one still busy.
+    keychain.snapshotClaudeCredentials.mockResolvedValue("after");
+    keychain.readClaudeCredentials.mockReturnValue(new Promise(() => {}));
+    await new Promise((r) => setTimeout(r, 90));
+
+    // Nothing on disk tells a stopped poll from a stuck one; only the interval does.
+    expect(cleared).toHaveBeenCalled();
+  });
+
+  it("still gives up on time when the baseline read never comes back", async () => {
+    const svc = await seeded({ accounts: [], activeSlug: null });
+    const cleared = vi.spyOn(globalThis, "clearInterval");
+    keychain.snapshotClaudeCredentials.mockReturnValue(new Promise(() => {}));
+
+    svc.pollForNewLogin(undefined, { intervalMs: 5, timeoutMs: 10 });
+    await new Promise((r) => setTimeout(r, 60));
+
+    expect(cleared).toHaveBeenCalled();
+  });
+
   it("cancels a prior poll loop when called again", async () => {
     const svc = await seeded({ accounts: [], activeSlug: null });
     keychain.snapshotClaudeCredentials.mockResolvedValue("before");
