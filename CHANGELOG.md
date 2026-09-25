@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ### Added
 - **A macOS menu bar app, for people without a Stream Deck.** `npm run desktop` puts your live 5h utilisation next to the clock and a native menu behind it: the 5h, 7d and Fable windows with their reset countdowns, the account you're on with a **Switch to …** item naming the one you'd land on, and a sign-in item. It reads the same accounts and the same quota as the plugin, so the two agree and either can drive a switch the other picks up. Only one copy can run at a time, so a second launch won't give you a second menu bar icon. Not packaged as a signed `.app` yet — it runs from source.
-- **Keys fetch as soon as they appear with nothing to show.** A reloaded plugin, or a deck plugged back in, used to sit on `--%` until you pressed it. It now asks once on appearing — even if Claude Code has been idle, since you are evidently right there — and then settles into the normal interval.
+- **Keys fetch as soon as they appear with nothing to show.** A reloaded plugin used to sit on `--%` until you pressed it. It now asks once on appearing — even if Claude Code has been idle, since you are evidently right there — and then settles into the normal interval.
 - **One catch-up refresh after the machine wakes.** Timers don't run while a laptop is asleep, so a 15-minute poll armed at midnight hadn't come due at breakfast and yesterday's percentage just sat there. Waking now schedules a single refresh a few seconds later — long enough for Wi-Fi to come back — and only when what's on screen is already older than your own interval. Nothing is fetched for a key whose auto-refresh is off.
 
 ### Fixed

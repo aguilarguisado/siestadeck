@@ -82,7 +82,8 @@ export class ActiveSessionService extends EventEmitter {
   /**
    * Register a consumer (typically an action key by `action.id`). When the
    * first consumer registers, a scan runs immediately and the 5 s scan timer
-   * starts. While zero consumers are registered the service does no
+   * starts — unless the service is suspended, in which case both wait for
+   * `resume()`. While zero consumers are registered the service does no
    * filesystem work.
    */
   acquire(id: string): void {
@@ -97,10 +98,10 @@ export class ActiveSessionService extends EventEmitter {
 
   /**
    * Stop scanning but keep every consumer — for when no UI can show the result,
-   * e.g. the last Stream Deck disconnects. A pause, not a release: Stream Deck
-   * replays neither `willDisappear` nor `willAppear` across a disconnect, so
-   * consumers dropped here would never be acquired again and the key would sit
-   * on the last model it drew.
+   * e.g. the last Stream Deck disconnects. A pause, not a release: views still
+   * on screen may never ask again when the host comes back (see the disconnect
+   * handler in plugin.ts), so consumers dropped here would never be acquired
+   * again and the view would sit on the last model it drew.
    */
   suspend(): void {
     this.suspended = true;

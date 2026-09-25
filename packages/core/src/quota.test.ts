@@ -46,7 +46,7 @@ const { readClaudeCredentialsMock } = vi.hoisted(() => ({
 vi.mock("./keychain.js", () => ({ readClaudeCredentials: readClaudeCredentialsMock }));
 
 const { QuotaRegistry } = await import("./quota.js");
-const { WAKE_CATCHUP_DELAY_MS } = await import("./quotaPolicy.js");
+const { CATCHUP_DELAY_MS } = await import("./quotaPolicy.js");
 
 // The endpoint reports utilization as a percentage; asWindow divides by 100.
 const USAGE = {
@@ -506,7 +506,7 @@ describe("requestAutoRefresh", () => {
     fetchMock.mockResolvedValue(okResponse());
 
     // Arming a timer alone would leave a fresh process drawing "--%" for a
-    // quarter of an hour — every plugin reload, every deck reconnect.
+    // quarter of an hour — every plugin reload, every Stream Deck restart.
     reg.requestAutoRefresh("key-1", 15 * 60_000);
     await vi.advanceTimersByTimeAsync(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -583,7 +583,7 @@ describe("requestAutoRefresh", () => {
     // Back an hour later, with nobody asking again: a fresh number within the
     // catch-up delay, and the polling carries on after it.
     reg.resumeAuto();
-    await vi.advanceTimersByTimeAsync(WAKE_CATCHUP_DELAY_MS);
+    await vi.advanceTimersByTimeAsync(CATCHUP_DELAY_MS);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(15 * 60_000);
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -608,7 +608,7 @@ describe("requestAutoRefresh", () => {
     reg.requestAutoRefresh("key-1", 15 * 60_000);
     reg.resumeAuto();
     reg.requestAutoRefresh("key-1", 15 * 60_000);
-    await vi.advanceTimersByTimeAsync(WAKE_CATCHUP_DELAY_MS);
+    await vi.advanceTimersByTimeAsync(CATCHUP_DELAY_MS);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -627,7 +627,28 @@ describe("requestAutoRefresh", () => {
     // does not promise which event lands first.
     reg.resumeAuto();
     reg.markAwake();
-    await vi.advanceTimersByTimeAsync(WAKE_CATCHUP_DELAY_MS);
+    await vi.advanceTimersByTimeAsync(CATCHUP_DELAY_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("collapses a wake and a reconnect into one catch-up when the wake lands first", async () => {
+    vi.useFakeTimers();
+    const reg = new QuotaRegistry();
+    reg.start();
+    fetchMock.mockResolvedValue(okResponse());
+
+    reg.requestAutoRefresh("key-1", 15 * 60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    reg.suspendAuto();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+
+    // Woken with the deck still away: nothing to show it on, so nothing fetched.
+    reg.markAwake();
+    await vi.advanceTimersByTimeAsync(CATCHUP_DELAY_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    reg.resumeAuto();
+    await vi.advanceTimersByTimeAsync(CATCHUP_DELAY_MS);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
